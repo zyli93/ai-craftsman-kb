@@ -3,8 +3,8 @@
 Last updated: [auto-updated by agents]
 
 ## Progress
-- Total: 0/45 done
-- Backend: 0/33 done
+- Total: 1/45 done
+- Backend: 1/33 done
 - Frontend: 0/12 done
 
 ## Wave Execution Order
@@ -13,7 +13,7 @@ Last updated: [auto-updated by agents]
 
 | Task | Description | Domain | Wave | Status | Branch | Dependencies |
 |------|-------------|--------|------|--------|--------|-------------|
-| task_01 | Project scaffolding + uv setup | backend | 1 | 🔵 in-progress | task/01-scaffolding | none |
+| task_01 | Project scaffolding + uv setup | backend | 1 | ✅ done | task/01-scaffolding | none |
 
 ### Wave 2 — Foundation (4 parallel)
 
