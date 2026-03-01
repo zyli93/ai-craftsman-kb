@@ -41,28 +41,50 @@ git checkout -b task/XX-short-description
 ### While working:
 Make atomic commits on your feature branch.
 
-### Before reporting completion:
-git checkout main
-git pull origin main
+### After completing work — agents self-merge:
+Agents must rebase, test, merge, push, and clean up their own branch.
+Do NOT leave branches open waiting for another session to merge.
+
+```bash
+cd /Users/zeyuli/projects/ai-craftsman-kb
+
+# 1. Rebase onto latest main
+git fetch origin
+git checkout main && git pull origin main
 git checkout task/XX-short-description
-git rebase main
+git rebase origin/main
+```
 
 If rebase conflicts:
-1. Read the conflicting files to understand what changed on main
-2. Resolve conflicts preserving BOTH your changes and main's changes
-3. git add <resolved files>
-4. git rebase --continue
-5. If the conflict is too complex, abort with git rebase --abort
-   and report the conflict — do NOT force through
+1. Read both sides to understand what changed
+2. Keep the more complete/correct version, preserving changes from both sides
+3. `git add <resolved-file>` then `git rebase --continue`
+4. If too complex to resolve confidently: `git rebase --abort`, mark task ❌ blocked in STATUS.md, report — do NOT force through
 
-After successful rebase:
-- Run tests to make sure nothing broke
-- Your branch is now cleanly ahead of main, ready for fast-forward merge
+```bash
+# 2. Run full tests after rebase
+uv run pytest backend/tests/ -v        # backend
+# cd dashboard && pnpm build           # frontend
+
+# 3. Fast-forward merge + push
+git checkout main
+git merge task/XX-short-description --ff-only
+git push origin main
+
+# 4. Clean up branch
+git branch -d task/XX-short-description
+
+# 5. Mark merged in STATUS.md, commit + push
+git add .claude/tasks/STATUS.md
+git commit -m "status: mark task_XX as merged"
+git push origin main
+```
 
 ### NEVER:
 - Force push to main
-- Merge without rebasing first
+- Merge without rebasing and testing first
 - Leave unresolved conflicts
+- Leave a branch open after a successful merge
 
 ## Current Status
 Check .claude/tasks/STATUS.md for task status tracker.

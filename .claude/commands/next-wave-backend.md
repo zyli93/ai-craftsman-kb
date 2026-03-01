@@ -27,8 +27,10 @@ You do NOT touch: dashboard scaffolding, React pages, or frontend components.
    - Read its task file
    - `git checkout main && git pull origin main` first
    - Create branch and implement
-   - Rebase onto main before finishing
+   - Run full tests
+   - Rebase onto main, resolve any conflicts
+   - Re-run tests after rebase
+   - Fast-forward merge into main, push, delete branch
+   - Update STATUS.md to 🔀 merged and push
    - Commit with conventional messages
-8. Report results, update STATUS.md
-
-Do NOT merge branches. The monitor session handles that.
+8. Report results — branches should already be merged when agents complete
