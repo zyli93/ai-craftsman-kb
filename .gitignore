@@ -1,0 +1,61 @@
+# Claude Code
+.claude/settings.local.json
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+*.egg
+.eggs/
+
+# uv / virtual envs
+.venv/
+venv/
+.env
+.env.*
+!.env.example
+
+# pytest
+.pytest_cache/
+.coverage
+htmlcov/
+*.xml
+
+# mypy / ruff / pyright
+.mypy_cache/
+.ruff_cache/
+.pyright/
+
+# Node / pnpm
+node_modules/
+dashboard/node_modules/
+dashboard/dist/
+dashboard/.vite/
+pnpm-lock.yaml
+
+# Data directory (local DB + vectors)
+.ai-craftsman-kb/
+*.db
+*.db-shm
+*.db-wal
+qdrant_storage/
+
+# Secrets
+*.pem
+*.key
+secrets.yaml
+credentials.yaml
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editors
+.idea/
+*.swp
+*.swo
