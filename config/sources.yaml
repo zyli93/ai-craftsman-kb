@@ -1,38 +1,41 @@
-# AI Craftsman KB — Source Configuration
-# Configure which sources to ingest and their settings.
-
-hacker_news:
-  enabled: true
-  mode: pro  # pro | radar
-  stories_per_run: 30
-  min_score: 100
-  tags: []  # optional: filter by HN tags
-
 substack:
-  enabled: false
-  newsletters: []  # list of subdomain names, e.g. ["lethain", "stratechery"]
+  - slug: karpathy
+    name: "Andrej Karpathy"
+  - slug: simonwillison
+    name: "Simon Willison"
+
+youtube_channels:
+  - handle: "@AndrejKarpathy"
+    name: "Andrej Karpathy"
+  - handle: "@YannicKilcher"
+    name: "Yannic Kilcher"
+
+subreddits:
+  - name: LocalLLaMA
+    sort: hot
+    limit: 25
+  - name: MachineLearning
+    sort: hot
+    limit: 25
 
 rss:
-  enabled: false
-  feeds: []  # list of feed URLs
+  - url: https://lobste.rs/rss
+    name: "Lobste.rs"
+  - url: https://openai.com/blog/rss.xml
+    name: "OpenAI Blog"
 
-youtube:
-  enabled: false
-  channels: []  # list of channel IDs or handles
-  api_key: ""   # set via YOUTUBE_API_KEY env var
-
-reddit:
-  enabled: false
-  subreddits: []  # list of subreddit names (without r/)
-  client_id: ""   # set via REDDIT_CLIENT_ID env var
-  client_secret: ""  # set via REDDIT_CLIENT_SECRET env var
+hackernews:
+  mode: top
+  limit: 30
 
 arxiv:
-  enabled: false
-  queries: []  # list of search queries
+  queries:
+    - "cat:cs.CL AND abs:large language model"
+    - "cat:cs.AI AND abs:reinforcement learning"
   max_results: 20
 
 devto:
-  enabled: false
-  tags: []  # list of DEV.to tags to follow
-  api_key: ""  # optional: set via DEVTO_API_KEY for higher rate limits
+  tags:
+    - ai
+    - machinelearning
+  limit: 20

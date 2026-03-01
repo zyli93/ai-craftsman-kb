@@ -1,41 +1,49 @@
-# AI Craftsman KB — Content Filters
-# Controls what content is kept or discarded during ingestion.
+hackernews:
+  enabled: true
+  strategy: llm
+  llm_prompt: |
+    Rate this article 1-10 for relevance to these topics:
+    - AI/ML engineering and research
+    - Software architecture and systems design
+    - Developer tools and productivity
+    - LLM applications and agents
+    - Tech industry strategy and business
 
-default:
-  strategy: keyword  # keyword | llm | hybrid | none
-  min_relevance_score: 0.5
+    Article title: {title}
+    Article excerpt: {excerpt}
 
-# Per-source filter overrides (optional)
-sources:
-  hacker_news:
-    strategy: keyword
-    keywords:
-      include:
-        - AI
-        - LLM
-        - machine learning
-        - "language model"
-        - "neural network"
-        - "artificial intelligence"
-        - ML
-        - "deep learning"
-        - "transformer"
-        - "RAG"
-        - "fine-tuning"
-        - "vector"
-        - "embedding"
-      exclude:
-        - crypto
-        - blockchain
-        - NFT
+    Respond with ONLY a number 1-10.
+  min_score: 5
+  keywords_exclude:
+    - crypto
+    - NFT
+    - blockchain
 
-  arxiv:
-    strategy: none  # ArXiv queries are already filtered by topic
+reddit:
+  enabled: true
+  strategy: hybrid
+  min_upvotes: 10
+  keywords_exclude:
+    - meme
 
-  youtube:
-    strategy: llm
-    min_relevance_score: 0.6
+substack:
+  enabled: false
 
-  reddit:
-    strategy: hybrid
-    min_relevance_score: 0.5
+youtube:
+  enabled: false
+
+arxiv:
+  enabled: true
+  strategy: keyword
+  keywords_include:
+    - transformer
+    - language model
+    - reinforcement learning
+
+rss:
+  enabled: false
+
+devto:
+  enabled: true
+  strategy: keyword
+  min_reactions: 5

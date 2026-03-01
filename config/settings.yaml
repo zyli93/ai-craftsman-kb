@@ -1,30 +1,50 @@
-# AI Craftsman KB — Application Settings
-
-data_dir: ~/.ai-craftsman-kb  # local data directory (DB + vectors)
-
-llm:
-  provider: openai       # openai | anthropic | openrouter
-  model: gpt-4o-mini    # model name for the selected provider
-  api_key: ""           # set via OPENAI_API_KEY / ANTHROPIC_API_KEY / OPENROUTER_API_KEY
+data_dir: ~/.ai-craftsman-kb/data
 
 embedding:
-  provider: openai      # openai | local
+  provider: openai
   model: text-embedding-3-small
-  dimensions: 1536
-  batch_size: 100
+  chunk_size: 2000
+  chunk_overlap: 200
 
-search:
-  default_limit: 10
-  hybrid_weights:
-    semantic: 0.6
-    keyword: 0.4
-  rrf_k: 60
+llm:
+  filtering:
+    provider: openrouter
+    model: meta-llama/llama-3.1-8b-instruct
+  entity_extraction:
+    provider: openrouter
+    model: meta-llama/llama-3.1-8b-instruct
+  briefing:
+    provider: anthropic
+    model: claude-sonnet-4-20250514
+  source_discovery:
+    provider: openrouter
+    model: meta-llama/llama-3.1-8b-instruct
 
-ingest:
-  dedup_window_days: 7   # skip articles seen in the last N days
-  content_min_words: 50  # skip articles shorter than N words
+providers:
+  openai:
+    api_key: ${OPENAI_API_KEY}
+  openrouter:
+    api_key: ${OPENROUTER_API_KEY}
+  anthropic:
+    api_key: ${ANTHROPIC_API_KEY}
+  fireworks:
+    api_key: ${FIREWORKS_API_KEY}
+  ollama:
+    base_url: http://localhost:11434
+
+youtube:
+  api_key: ${YOUTUBE_API_KEY}
+  transcript_langs: ["en"]
+
+reddit:
+  client_id: ${REDDIT_CLIENT_ID}
+  client_secret: ${REDDIT_CLIENT_SECRET}
 
 server:
-  host: 127.0.0.1
-  port: 8000
+  backend_port: 8000
   dashboard_port: 3000
+
+search:
+  default_limit: 20
+  hybrid_weight_semantic: 0.6
+  hybrid_weight_keyword: 0.4
