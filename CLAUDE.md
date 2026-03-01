@@ -32,11 +32,37 @@ See plan.md for full architecture. Key directories:
 - `cd dashboard && pnpm dev` — start dashboard dev server
 
 ## Git Workflow
-- Main branch: `main`
-- Feature branches: `task/TASK_ID-short-description`
-- Atomic commits: one logical change per commit
-- Commit messages: `feat(ingestor): add HN pro-tier ingestion`
-- Always run tests before committing
+
+### Before starting any task:
+git checkout main
+git pull origin main
+git checkout -b task/XX-short-description
+
+### While working:
+Make atomic commits on your feature branch.
+
+### Before reporting completion:
+git checkout main
+git pull origin main
+git checkout task/XX-short-description
+git rebase main
+
+If rebase conflicts:
+1. Read the conflicting files to understand what changed on main
+2. Resolve conflicts preserving BOTH your changes and main's changes
+3. git add <resolved files>
+4. git rebase --continue
+5. If the conflict is too complex, abort with git rebase --abort
+   and report the conflict — do NOT force through
+
+After successful rebase:
+- Run tests to make sure nothing broke
+- Your branch is now cleanly ahead of main, ready for fast-forward merge
+
+### NEVER:
+- Force push to main
+- Merge without rebasing first
+- Leave unresolved conflicts
 
 ## Current Status
 Check .claude/tasks/STATUS.md for task status tracker.
