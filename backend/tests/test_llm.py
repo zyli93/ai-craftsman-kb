@@ -1,0 +1,547 @@
+"""Tests for the LLM provider abstraction layer.
+
+All external API calls are mocked; no network access is required.
+"""
+from __future__ import annotations
+
+from typing import Any
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import httpx
+import pytest
+
+from ai_craftsman_kb.llm import LLMProvider, LLMRouter
+from ai_craftsman_kb.llm.anthropic_provider import AnthropicProvider
+from ai_craftsman_kb.llm.ollama_provider import OllamaProvider
+from ai_craftsman_kb.llm.openai_provider import OpenAIProvider
+from ai_craftsman_kb.llm.openrouter_provider import OpenRouterProvider
+from ai_craftsman_kb.llm.retry import _is_retryable_error, with_retry
+
+
+# ---------------------------------------------------------------------------
+# Helpers / fixtures
+# ---------------------------------------------------------------------------
+
+
+def _make_app_config(
+    *,
+    openai_key: str | None = "sk-test",
+    openrouter_key: str | None = "or-test",
+    anthropic_key: str | None = "ant-test",
+    ollama_base_url: str = "http://localhost:11434",
+    embedding_provider: str = "openai",
+    embedding_model: str = "text-embedding-3-small",
+) -> MagicMock:
+    """Build a minimal AppConfig mock suitable for LLMRouter tests."""
+    config = MagicMock()
+
+    # Provider configs
+    def _provider_cfg(key: str | None, base_url: str | None = None) -> MagicMock:
+        m = MagicMock()
+        m.api_key = key
+        m.base_url = base_url
+        return m
+
+    config.settings.providers = {
+        "openai": _provider_cfg(openai_key),
+        "openrouter": _provider_cfg(openrouter_key),
+        "anthropic": _provider_cfg(anthropic_key),
+        "ollama": _provider_cfg(None, ollama_base_url),
+    }
+
+    # LLM task routing
+    def _task_cfg(provider: str, model: str) -> MagicMock:
+        m = MagicMock()
+        m.provider = provider
+        m.model = model
+        return m
+
+    config.settings.llm.filtering = _task_cfg("openrouter", "meta-llama/llama-3.1-8b-instruct")
+    config.settings.llm.entity_extraction = _task_cfg(
+        "openrouter", "meta-llama/llama-3.1-8b-instruct"
+    )
+    config.settings.llm.briefing = _task_cfg("anthropic", "claude-haiku-4-5-20251001")
+    config.settings.llm.source_discovery = _task_cfg(
+        "openrouter", "meta-llama/llama-3.1-8b-instruct"
+    )
+
+    # Embedding config
+    config.settings.embedding.provider = embedding_provider
+    config.settings.embedding.model = embedding_model
+
+    return config
+
+
+# ---------------------------------------------------------------------------
+# Abstract base class tests
+# ---------------------------------------------------------------------------
+
+
+def test_llm_provider_is_abstract() -> None:
+    """LLMProvider cannot be instantiated directly."""
+    with pytest.raises(TypeError):
+        LLMProvider()  # type: ignore[abstract]
+
+
+# ---------------------------------------------------------------------------
+# OpenAI provider tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_openai_provider_complete() -> None:
+    """OpenAI provider complete() formats messages and returns content."""
+    provider = OpenAIProvider(api_key="sk-test", model="gpt-4o-mini")
+
+    # Build a mock response matching the openai SDK structure
+    mock_message = MagicMock()
+    mock_message.content = "Hello, world!"
+    mock_choice = MagicMock()
+    mock_choice.message = mock_message
+    mock_response = MagicMock()
+    mock_response.choices = [mock_choice]
+
+    provider._client.chat.completions.create = AsyncMock(return_value=mock_response)
+
+    result = await provider.complete("Say hello", system="You are helpful.")
+
+    assert result == "Hello, world!"
+    provider._client.chat.completions.create.assert_called_once()
+    call_kwargs = provider._client.chat.completions.create.call_args
+    messages = call_kwargs.kwargs["messages"]
+    assert messages[0] == {"role": "system", "content": "You are helpful."}
+    assert messages[1] == {"role": "user", "content": "Say hello"}
+
+
+@pytest.mark.asyncio
+async def test_openai_provider_complete_no_system() -> None:
+    """OpenAI provider complete() without system message sends only user message."""
+    provider = OpenAIProvider(api_key="sk-test")
+
+    mock_message = MagicMock()
+    mock_message.content = "Response"
+    mock_choice = MagicMock()
+    mock_choice.message = mock_message
+    mock_response = MagicMock()
+    mock_response.choices = [mock_choice]
+
+    provider._client.chat.completions.create = AsyncMock(return_value=mock_response)
+
+    await provider.complete("Hello")
+
+    call_kwargs = provider._client.chat.completions.create.call_args
+    messages = call_kwargs.kwargs["messages"]
+    assert len(messages) == 1
+    assert messages[0]["role"] == "user"
+
+
+@pytest.mark.asyncio
+async def test_openai_provider_embed() -> None:
+    """OpenAI provider embed() returns embedding vectors in input order."""
+    provider = OpenAIProvider(
+        api_key="sk-test",
+        embedding_model="text-embedding-3-small",
+    )
+
+    vec1 = [0.1, 0.2, 0.3]
+    vec2 = [0.4, 0.5, 0.6]
+
+    item1 = MagicMock()
+    item1.embedding = vec1
+    item2 = MagicMock()
+    item2.embedding = vec2
+    mock_response = MagicMock()
+    mock_response.data = [item1, item2]
+
+    provider._client.embeddings.create = AsyncMock(return_value=mock_response)
+
+    result = await provider.embed(["text one", "text two"])
+
+    assert result == [vec1, vec2]
+    provider._client.embeddings.create.assert_called_once_with(
+        model="text-embedding-3-small",
+        input=["text one", "text two"],
+    )
+
+
+# ---------------------------------------------------------------------------
+# OpenRouter provider tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_openrouter_provider_complete() -> None:
+    """OpenRouter provider complete() calls the correct endpoint and returns content."""
+    provider = OpenRouterProvider(
+        api_key="or-test",
+        model="meta-llama/llama-3.1-8b-instruct",
+    )
+
+    mock_resp = MagicMock(spec=httpx.Response)
+    mock_resp.json.return_value = {
+        "choices": [{"message": {"content": "OpenRouter reply"}}]
+    }
+    mock_resp.raise_for_status = MagicMock()
+
+    provider._client.post = AsyncMock(return_value=mock_resp)
+
+    result = await provider.complete("Summarise this", system="Be concise.")
+
+    assert result == "OpenRouter reply"
+    provider._client.post.assert_called_once()
+    call_args = provider._client.post.call_args
+    assert call_args.args[0] == "/chat/completions"
+    payload = call_args.kwargs["json"]
+    assert payload["model"] == "meta-llama/llama-3.1-8b-instruct"
+    assert payload["messages"][0]["role"] == "system"
+    assert payload["messages"][1]["role"] == "user"
+
+
+@pytest.mark.asyncio
+async def test_openrouter_provider_embed_raises() -> None:
+    """OpenRouter provider embed() raises NotImplementedError."""
+    provider = OpenRouterProvider(api_key="or-test", model="some-model")
+    with pytest.raises(NotImplementedError):
+        await provider.embed(["text"])
+
+
+# ---------------------------------------------------------------------------
+# Anthropic provider tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_anthropic_provider_complete() -> None:
+    """Anthropic provider complete() calls /v1/messages and returns text."""
+    provider = AnthropicProvider(api_key="ant-test", model="claude-haiku-4-5-20251001")
+
+    mock_resp = MagicMock(spec=httpx.Response)
+    mock_resp.json.return_value = {
+        "content": [{"type": "text", "text": "Anthropic reply"}]
+    }
+    mock_resp.raise_for_status = MagicMock()
+
+    provider._client.post = AsyncMock(return_value=mock_resp)
+
+    result = await provider.complete("Draft a summary", system="You are an expert.")
+
+    assert result == "Anthropic reply"
+    provider._client.post.assert_called_once()
+    call_args = provider._client.post.call_args
+    assert call_args.args[0] == "/v1/messages"
+    payload = call_args.kwargs["json"]
+    assert payload["model"] == "claude-haiku-4-5-20251001"
+    assert payload["system"] == "You are an expert."
+    assert payload["messages"][0]["role"] == "user"
+
+
+@pytest.mark.asyncio
+async def test_anthropic_provider_complete_respects_max_tokens() -> None:
+    """Anthropic provider complete() passes max_tokens kwarg through."""
+    provider = AnthropicProvider(api_key="ant-test")
+
+    mock_resp = MagicMock(spec=httpx.Response)
+    mock_resp.json.return_value = {"content": [{"type": "text", "text": "ok"}]}
+    mock_resp.raise_for_status = MagicMock()
+
+    provider._client.post = AsyncMock(return_value=mock_resp)
+
+    await provider.complete("Hello", max_tokens=512)
+
+    payload = provider._client.post.call_args.kwargs["json"]
+    assert payload["max_tokens"] == 512
+
+
+@pytest.mark.asyncio
+async def test_anthropic_provider_embed_raises() -> None:
+    """Anthropic provider embed() raises NotImplementedError."""
+    provider = AnthropicProvider(api_key="ant-test")
+    with pytest.raises(NotImplementedError):
+        await provider.embed(["text"])
+
+
+# ---------------------------------------------------------------------------
+# Ollama provider tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_ollama_provider_complete() -> None:
+    """Ollama provider complete() calls /api/chat and returns message content."""
+    provider = OllamaProvider(model="llama3")
+
+    mock_resp = MagicMock(spec=httpx.Response)
+    mock_resp.json.return_value = {"message": {"content": "Ollama reply"}}
+    mock_resp.raise_for_status = MagicMock()
+
+    provider._client.post = AsyncMock(return_value=mock_resp)
+
+    result = await provider.complete("Hello")
+
+    assert result == "Ollama reply"
+    call_args = provider._client.post.call_args
+    assert call_args.args[0] == "/api/chat"
+    payload = call_args.kwargs["json"]
+    assert payload["stream"] is False
+
+
+@pytest.mark.asyncio
+async def test_ollama_provider_embed() -> None:
+    """Ollama provider embed() calls /api/embeddings for each text separately."""
+    provider = OllamaProvider(model="llama3")
+
+    responses = [
+        MagicMock(
+            spec=httpx.Response,
+            **{
+                "json.return_value": {"embedding": [0.1, 0.2]},
+                "raise_for_status": MagicMock(),
+            },
+        ),
+        MagicMock(
+            spec=httpx.Response,
+            **{
+                "json.return_value": {"embedding": [0.3, 0.4]},
+                "raise_for_status": MagicMock(),
+            },
+        ),
+    ]
+    provider._client.post = AsyncMock(side_effect=responses)
+
+    result = await provider.embed(["first", "second"])
+
+    assert result == [[0.1, 0.2], [0.3, 0.4]]
+    assert provider._client.post.call_count == 2
+
+
+# ---------------------------------------------------------------------------
+# LLMRouter tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_router_dispatches_filtering_to_openrouter() -> None:
+    """LLMRouter routes 'filtering' task to OpenRouterProvider."""
+    config = _make_app_config()
+    router = LLMRouter(config)
+
+    mock_resp = MagicMock(spec=httpx.Response)
+    mock_resp.json.return_value = {
+        "choices": [{"message": {"content": "filtered"}}]
+    }
+    mock_resp.raise_for_status = MagicMock()
+
+    with patch.object(
+        OpenRouterProvider, "complete", new_callable=AsyncMock, return_value="filtered"
+    ) as mock_complete:
+        result = await router.complete("filtering", prompt="Is this relevant?")
+
+    assert result == "filtered"
+    mock_complete.assert_called_once_with(
+        prompt="Is this relevant?", system=""
+    )
+
+
+@pytest.mark.asyncio
+async def test_router_dispatches_briefing_to_anthropic() -> None:
+    """LLMRouter routes 'briefing' task to AnthropicProvider."""
+    config = _make_app_config()
+    router = LLMRouter(config)
+
+    with patch.object(
+        AnthropicProvider, "complete", new_callable=AsyncMock, return_value="briefing text"
+    ) as mock_complete:
+        result = await router.complete("briefing", prompt="Write a briefing")
+
+    assert result == "briefing text"
+    mock_complete.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_router_embed_uses_embedding_provider() -> None:
+    """LLMRouter embed() delegates to the configured embedding provider."""
+    config = _make_app_config(embedding_provider="openai", embedding_model="text-embedding-3-small")
+    router = LLMRouter(config)
+
+    expected = [[0.1, 0.2, 0.3]]
+    with patch.object(
+        OpenAIProvider, "embed", new_callable=AsyncMock, return_value=expected
+    ) as mock_embed:
+        result = await router.embed(["hello world"])
+
+    assert result == expected
+    mock_embed.assert_called_once_with(["hello world"])
+
+
+@pytest.mark.asyncio
+async def test_router_raises_on_unknown_task() -> None:
+    """LLMRouter raises ValueError for unrecognised task names."""
+    config = _make_app_config()
+    router = LLMRouter(config)
+
+    with pytest.raises(ValueError, match="Unknown task"):
+        await router.complete("invalid_task", prompt="test")
+
+
+@pytest.mark.asyncio
+async def test_router_raises_on_missing_openai_key() -> None:
+    """LLMRouter raises ValueError when OpenAI API key is missing."""
+    config = _make_app_config(openai_key=None, embedding_provider="openai")
+    router = LLMRouter(config)
+
+    with pytest.raises(ValueError, match="OpenAI API key not configured"):
+        await router.embed(["test"])
+
+
+@pytest.mark.asyncio
+async def test_router_raises_on_missing_openrouter_key() -> None:
+    """LLMRouter raises ValueError when OpenRouter API key is missing."""
+    config = _make_app_config(openrouter_key=None)
+    router = LLMRouter(config)
+
+    with pytest.raises(ValueError, match="OpenRouter API key not configured"):
+        await router.complete("filtering", prompt="test")
+
+
+@pytest.mark.asyncio
+async def test_router_raises_on_missing_anthropic_key() -> None:
+    """LLMRouter raises ValueError when Anthropic API key is missing."""
+    config = _make_app_config(anthropic_key=None)
+    router = LLMRouter(config)
+
+    with pytest.raises(ValueError, match="Anthropic API key not configured"):
+        await router.complete("briefing", prompt="test")
+
+
+@pytest.mark.asyncio
+async def test_router_caches_provider_instances() -> None:
+    """LLMRouter creates only one provider instance per task across calls."""
+    config = _make_app_config()
+    router = LLMRouter(config)
+
+    with patch.object(
+        OpenRouterProvider, "complete", new_callable=AsyncMock, return_value="ok"
+    ):
+        await router.complete("filtering", prompt="first call")
+        await router.complete("filtering", prompt="second call")
+
+    # Only one provider should have been cached
+    assert len(router._task_providers) == 1
+    assert "filtering" in router._task_providers
+
+
+@pytest.mark.asyncio
+async def test_router_ollama_provider_no_api_key_required() -> None:
+    """LLMRouter can create an Ollama provider without any API key."""
+    config = _make_app_config()
+    # Manually set filtering task to use ollama
+    config.settings.llm.filtering.provider = "ollama"
+    config.settings.llm.filtering.model = "llama3"
+    router = LLMRouter(config)
+
+    with patch.object(
+        OllamaProvider, "complete", new_callable=AsyncMock, return_value="local result"
+    ) as mock_complete:
+        result = await router.complete("filtering", prompt="test")
+
+    assert result == "local result"
+
+
+# ---------------------------------------------------------------------------
+# Retry utility tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_retry_succeeds_on_first_attempt() -> None:
+    """with_retry returns immediately if the first call succeeds."""
+    call_count = 0
+
+    async def _fn() -> str:
+        nonlocal call_count
+        call_count += 1
+        return "success"
+
+    result = await with_retry(_fn, operation_name="test")
+    assert result == "success"
+    assert call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_retry_retries_on_timeout() -> None:
+    """with_retry retries when httpx.TimeoutException is raised."""
+    call_count = 0
+
+    async def _fn() -> str:
+        nonlocal call_count
+        call_count += 1
+        if call_count < 3:
+            raise httpx.TimeoutException("timeout")
+        return "eventual success"
+
+    with patch("ai_craftsman_kb.llm.retry.asyncio.sleep", new_callable=AsyncMock):
+        result = await with_retry(_fn, max_attempts=3, operation_name="test")
+
+    assert result == "eventual success"
+    assert call_count == 3
+
+
+@pytest.mark.asyncio
+async def test_retry_raises_after_max_attempts() -> None:
+    """with_retry raises after exhausting all attempts."""
+    async def _fn() -> str:
+        raise httpx.TimeoutException("always times out")
+
+    with patch("ai_craftsman_kb.llm.retry.asyncio.sleep", new_callable=AsyncMock):
+        with pytest.raises(httpx.TimeoutException):
+            await with_retry(_fn, max_attempts=3, operation_name="test")
+
+
+@pytest.mark.asyncio
+async def test_retry_does_not_retry_non_transient_errors() -> None:
+    """with_retry raises immediately on non-retryable errors."""
+    call_count = 0
+
+    async def _fn() -> str:
+        nonlocal call_count
+        call_count += 1
+        raise ValueError("bad input")
+
+    with pytest.raises(ValueError, match="bad input"):
+        await with_retry(_fn, max_attempts=3, operation_name="test")
+
+    assert call_count == 1  # No retry for non-transient errors
+
+
+def test_is_retryable_error_timeout() -> None:
+    """_is_retryable_error returns True for timeout exceptions."""
+    assert _is_retryable_error(httpx.TimeoutException("timeout")) is True
+
+
+def test_is_retryable_error_rate_limit() -> None:
+    """_is_retryable_error returns True for 429 HTTP status errors."""
+    response = MagicMock(spec=httpx.Response)
+    response.status_code = 429
+    exc = httpx.HTTPStatusError("rate limit", request=MagicMock(), response=response)
+    assert _is_retryable_error(exc) is True
+
+
+def test_is_retryable_error_server_error() -> None:
+    """_is_retryable_error returns True for 5xx HTTP status errors."""
+    response = MagicMock(spec=httpx.Response)
+    response.status_code = 503
+    exc = httpx.HTTPStatusError("service unavailable", request=MagicMock(), response=response)
+    assert _is_retryable_error(exc) is True
+
+
+def test_is_retryable_error_client_error() -> None:
+    """_is_retryable_error returns False for 4xx errors (except 429)."""
+    response = MagicMock(spec=httpx.Response)
+    response.status_code = 400
+    exc = httpx.HTTPStatusError("bad request", request=MagicMock(), response=response)
+    assert _is_retryable_error(exc) is False
+
+
+def test_is_retryable_error_value_error() -> None:
+    """_is_retryable_error returns False for non-HTTP errors."""
+    assert _is_retryable_error(ValueError("nope")) is False
