@@ -13,7 +13,7 @@ Last updated: [auto-updated by agents]
 
 | Task | Description | Domain | Wave | Status | Branch | Dependencies |
 |------|-------------|--------|------|--------|--------|-------------|
-| task_01 | Project scaffolding + uv setup | backend | 1 | 🔲 todo | task/01-scaffolding | none |
+| task_01 | Project scaffolding + uv setup | backend | 1 | 🔵 in-progress | task/01-scaffolding | none |
 
 ### Wave 2 — Foundation (4 parallel)
 
