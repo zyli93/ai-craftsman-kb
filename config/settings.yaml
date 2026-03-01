@@ -1,0 +1,30 @@
+# AI Craftsman KB — Application Settings
+
+data_dir: ~/.ai-craftsman-kb  # local data directory (DB + vectors)
+
+llm:
+  provider: openai       # openai | anthropic | openrouter
+  model: gpt-4o-mini    # model name for the selected provider
+  api_key: ""           # set via OPENAI_API_KEY / ANTHROPIC_API_KEY / OPENROUTER_API_KEY
+
+embedding:
+  provider: openai      # openai | local
+  model: text-embedding-3-small
+  dimensions: 1536
+  batch_size: 100
+
+search:
+  default_limit: 10
+  hybrid_weights:
+    semantic: 0.6
+    keyword: 0.4
+  rrf_k: 60
+
+ingest:
+  dedup_window_days: 7   # skip articles seen in the last N days
+  content_min_words: 50  # skip articles shorter than N words
+
+server:
+  host: 127.0.0.1
+  port: 8000
+  dashboard_port: 3000

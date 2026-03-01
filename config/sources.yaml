@@ -1,0 +1,38 @@
+# AI Craftsman KB — Source Configuration
+# Configure which sources to ingest and their settings.
+
+hacker_news:
+  enabled: true
+  mode: pro  # pro | radar
+  stories_per_run: 30
+  min_score: 100
+  tags: []  # optional: filter by HN tags
+
+substack:
+  enabled: false
+  newsletters: []  # list of subdomain names, e.g. ["lethain", "stratechery"]
+
+rss:
+  enabled: false
+  feeds: []  # list of feed URLs
+
+youtube:
+  enabled: false
+  channels: []  # list of channel IDs or handles
+  api_key: ""   # set via YOUTUBE_API_KEY env var
+
+reddit:
+  enabled: false
+  subreddits: []  # list of subreddit names (without r/)
+  client_id: ""   # set via REDDIT_CLIENT_ID env var
+  client_secret: ""  # set via REDDIT_CLIENT_SECRET env var
+
+arxiv:
+  enabled: false
+  queries: []  # list of search queries
+  max_results: 20
+
+devto:
+  enabled: false
+  tags: []  # list of DEV.to tags to follow
+  api_key: ""  # optional: set via DEVTO_API_KEY for higher rate limits

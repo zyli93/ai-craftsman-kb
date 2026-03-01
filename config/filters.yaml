@@ -1,0 +1,41 @@
+# AI Craftsman KB — Content Filters
+# Controls what content is kept or discarded during ingestion.
+
+default:
+  strategy: keyword  # keyword | llm | hybrid | none
+  min_relevance_score: 0.5
+
+# Per-source filter overrides (optional)
+sources:
+  hacker_news:
+    strategy: keyword
+    keywords:
+      include:
+        - AI
+        - LLM
+        - machine learning
+        - "language model"
+        - "neural network"
+        - "artificial intelligence"
+        - ML
+        - "deep learning"
+        - "transformer"
+        - "RAG"
+        - "fine-tuning"
+        - "vector"
+        - "embedding"
+      exclude:
+        - crypto
+        - blockchain
+        - NFT
+
+  arxiv:
+    strategy: none  # ArXiv queries are already filtered by topic
+
+  youtube:
+    strategy: llm
+    min_relevance_score: 0.6
+
+  reddit:
+    strategy: hybrid
+    min_relevance_score: 0.5
