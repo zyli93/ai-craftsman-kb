@@ -13,16 +13,16 @@ Last updated: [auto-updated by agents]
 
 | Task | Description | Domain | Wave | Status | Branch | Dependencies |
 |------|-------------|--------|------|--------|--------|-------------|
-| task_01 | Project scaffolding + uv setup | backend | 1 | ✅ done | task/01-scaffolding | none |
+| task_01 | Project scaffolding + uv setup | backend | 1 | 🔀 merged | task/01-scaffolding | none |
 
 ### Wave 2 — Foundation (4 parallel)
 
 | Task | Description | Domain | Wave | Status | Branch | Dependencies |
 |------|-------------|--------|------|--------|--------|-------------|
-| task_02 | Config system (YAML loader + Pydantic) | backend | 2 | ✅ done | task/02-config | 01 |
-| task_03 | SQLite schema + migrations + queries | backend | 2 | ✅ done | task/03-database | 01 |
-| task_04 | LLM provider abstraction | backend | 2 | ✅ done | task/04-llm-providers | 01 |
-| task_05 | Base ingestor interface + content extractor | backend | 2 | ✅ done | task/05-base-ingestor | 01 |
+| task_02 | Config system (YAML loader + Pydantic) | backend | 2 | 🔀 merged | task/02-config | 01 |
+| task_03 | SQLite schema + migrations + queries | backend | 2 | 🔀 merged | task/03-database | 01 |
+| task_04 | LLM provider abstraction | backend | 2 | 🔀 merged | task/04-llm-providers | 01 |
+| task_05 | Base ingestor interface + content extractor | backend | 2 | 🔀 merged | task/05-base-ingestor | 01 |
 
 ### Wave 3 — First Ingestor + CLI (3 parallel)
 
