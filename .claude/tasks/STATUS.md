@@ -4,8 +4,8 @@ Last updated: [auto-updated by agents]
 
 ## Progress
 - Total: 6/45 done
-- Backend: 5/33 done
-- Frontend: 1/12 done
+- Backend: 5/33 done (waves 1-2 merged)
+- Frontend: 1/12 done (task_32 merged)
 
 ## Wave Execution Order
 
@@ -103,7 +103,7 @@ Last updated: [auto-updated by agents]
 | Task | Description | Domain | Wave | Status | Branch | Dependencies |
 |------|-------------|--------|------|--------|--------|-------------|
 | task_30 | FastAPI REST API layer | backend | 13 | 🔲 todo | task/30-rest-api | 03, 21, 26 |
-| task_32 | Dashboard scaffolding (Vite + Tailwind + shadcn) | frontend | 13 | ✅ done | task/32-dashboard-scaffold | none |
+| task_32 | Dashboard scaffolding (Vite + Tailwind + shadcn) | frontend | 13 | 🔀 merged | task/32-dashboard-scaffold | none |
 
 ### Wave 14 — All Dashboard Pages (7 parallel)
 
