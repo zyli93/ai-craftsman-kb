@@ -28,9 +28,9 @@ Last updated: [auto-updated by agents]
 
 | Task | Description | Domain | Wave | Status | Branch | Dependencies |
 |------|-------------|--------|------|--------|--------|-------------|
-| task_06 | HN ingestor (pro + radar) | backend | 3 | 🔲 todo | task/06-hn-ingestor | 02, 03, 05 |
-| task_07 | Content filter (LLM + keyword) | backend | 3 | 🔲 todo | task/07-content-filter | 04, 05 |
-| task_08 | CLI skeleton (Click) | backend | 3 | 🔲 todo | task/08-cli | 02, 03 |
+| task_06 | HN ingestor (pro + radar) | backend | 3 | 🔵 in-progress | task/06-hn-ingestor | 02, 03, 05 |
+| task_07 | Content filter (LLM + keyword) | backend | 3 | 🔵 in-progress | task/07-content-filter | 04, 05 |
+| task_08 | CLI skeleton (Click) | backend | 3 | 🔵 in-progress | task/08-cli | 02, 03 |
 
 ### Wave 4 — Phase 1 Integration (sequential)
 
