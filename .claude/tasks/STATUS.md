@@ -3,8 +3,8 @@
 Last updated: [auto-updated by agents]
 
 ## Progress
-- Total: 10/45 done
-- Backend: 9/33 done (waves 1-4 merged); tasks 10-15,18,19,22,26,42,43 in-progress
+- Total: 22/45 done
+- Backend: 21/33 done (waves 1-5 + 7/10/16 merged)
 - Frontend: 1/12 done (task_32 merged)
 
 ## Wave Execution Order
@@ -42,12 +42,12 @@ Last updated: [auto-updated by agents]
 
 | Task | Description | Domain | Wave | Status | Branch | Dependencies |
 |------|-------------|--------|------|--------|--------|-------------|
-| task_10 | Substack ingestor | backend | 5 | 🔵 in-progress | task/10-substack | 05 |
-| task_11 | RSS ingestor | backend | 5 | 🔵 in-progress | task/11-rss | 05 |
-| task_12 | YouTube ingestor + transcripts | backend | 5 | 🔵 in-progress | task/12-youtube | 05 |
-| task_13 | Reddit ingestor | backend | 5 | 🔵 in-progress | task/13-reddit | 05 |
-| task_14 | ArXiv ingestor | backend | 5 | 🔵 in-progress | task/14-arxiv | 05 |
-| task_15 | DEV.to ingestor | backend | 5 | 🔵 in-progress | task/15-devto | 05 |
+| task_10 | Substack ingestor | backend | 5 | 🔀 merged | task/10-substack | 05 |
+| task_11 | RSS ingestor | backend | 5 | 🔀 merged | task/11-rss | 05 |
+| task_12 | YouTube ingestor + transcripts | backend | 5 | 🔀 merged | task/12-youtube | 05 |
+| task_13 | Reddit ingestor | backend | 5 | 🔀 merged | task/13-reddit | 05 |
+| task_14 | ArXiv ingestor | backend | 5 | 🔀 merged | task/14-arxiv | 05 |
+| task_15 | DEV.to ingestor | backend | 5 | 🔀 merged | task/15-devto | 05 |
 
 ### Wave 6 — Adhoc + Integration (sequential)
 
@@ -60,9 +60,9 @@ Last updated: [auto-updated by agents]
 
 | Task | Description | Domain | Wave | Status | Branch | Dependencies |
 |------|-------------|--------|------|--------|--------|-------------|
-| task_18 | Embedding pipeline (OpenAI + local) | backend | 7 | 🔵 in-progress | task/18-embeddings | 04 |
-| task_19 | Chunking system | backend | 7 | 🔵 in-progress | task/19-chunking | none |
-| task_22 | Entity extraction pipeline | backend | 7 | 🔵 in-progress | task/22-entity-extraction | 04 |
+| task_18 | Embedding pipeline (OpenAI + local) | backend | 7 | 🔀 merged | task/18-embeddings | 04 |
+| task_19 | Chunking system | backend | 7 | 🔀 merged | task/19-chunking | none |
+| task_22 | Entity extraction pipeline | backend | 7 | 🔀 merged | task/22-entity-extraction | 04 |
 
 ### Wave 8 — Vector + Entity Store (2 parallel)
 
@@ -83,7 +83,7 @@ Last updated: [auto-updated by agents]
 
 | Task | Description | Domain | Wave | Status | Branch | Dependencies |
 |------|-------------|--------|------|--------|--------|-------------|
-| task_26 | Radar engine orchestrator (async fan-out) | backend | 10 | 🔵 in-progress | task/26-radar-engine | 05 |
+| task_26 | Radar engine orchestrator (async fan-out) | backend | 10 | 🔀 merged | task/26-radar-engine | 05 |
 
 ### Wave 11 — Radar Sources (2 parallel)
 
@@ -129,8 +129,8 @@ Last updated: [auto-updated by agents]
 
 | Task | Description | Domain | Wave | Status | Branch | Dependencies |
 |------|-------------|--------|------|--------|--------|-------------|
-| task_42 | Source discovery engine | backend | 16 | 🔵 in-progress | task/42-source-discovery | 03 |
-| task_43 | Rich CLI output + progress bars | backend | 16 | 🔵 in-progress | task/43-rich-cli | 08 |
+| task_42 | Source discovery engine | backend | 16 | 🔀 merged | task/42-source-discovery | 03 |
+| task_43 | Rich CLI output + progress bars | backend | 16 | 🔀 merged | task/43-rich-cli | 08 |
 | task_44 | Export functionality | backend | 16 | 🔲 todo | task/44-export | 21 |
 | task_45 | Error resilience + `cr doctor` | backend | 16 | 🔲 todo | task/45-resilience | all prior |
 
