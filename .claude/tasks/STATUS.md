@@ -36,7 +36,7 @@ Last updated: [auto-updated by agents]
 
 | Task | Description | Domain | Wave | Status | Branch | Dependencies |
 |------|-------------|--------|------|--------|--------|-------------|
-| task_09 | Phase 1 integration + tests | integration | 4 | 🔲 todo | task/09-phase1-integration | 06, 07, 08 |
+| task_09 | Phase 1 integration + tests | integration | 4 | 🔵 in-progress | task/09-phase1-integration | 06, 07, 08 |
 
 ### Wave 5 — All Ingestors (6 parallel)
 
