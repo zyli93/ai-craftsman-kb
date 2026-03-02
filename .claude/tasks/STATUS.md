@@ -3,8 +3,8 @@
 Last updated: [auto-updated by agents]
 
 ## Progress
-- Total: 31/45 done
-- Backend: 30/33 done; tasks 17,21,24 merged
+- Total: 32/45 done
+- Backend: 31/33 done; tasks 17,21,24,44 merged
 - Frontend: 1/12 done (task_32 merged)
 
 ## Wave Execution Order
@@ -131,7 +131,7 @@ Last updated: [auto-updated by agents]
 |------|-------------|--------|------|--------|--------|-------------|
 | task_42 | Source discovery engine | backend | 16 | 🔀 merged | task/42-source-discovery | 03 |
 | task_43 | Rich CLI output + progress bars | backend | 16 | 🔀 merged | task/43-rich-cli | 08 |
-| task_44 | Export functionality | backend | 16 | 🔵 in-progress | task/44-export | 21 |
+| task_44 | Export functionality | backend | 16 | 🔀 merged | task/44-export | 21 |
 | task_45 | Error resilience + `cr doctor` | backend | 16 | 🔲 todo | task/45-resilience | all prior |
 
 ## Status Legend
