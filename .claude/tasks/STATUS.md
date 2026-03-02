@@ -77,7 +77,7 @@ Last updated: [auto-updated by agents]
 |------|-------------|--------|------|--------|--------|-------------|
 | task_21 | Hybrid search (FTS + vector + RRF) | backend | 9 | 🔀 merged | task/21-hybrid-search | 03, 20 |
 | task_24 | Auto-embed + extract on ingest hook | backend | 9 | 🔀 merged | task/24-ingest-pipeline | 18, 19, 20, 22 |
-| task_25 | Search CLI enhancements | backend | 9 | 🔵 in-progress | task/25-search-cli | 08, 21, 23 |
+| task_25 | Search CLI enhancements | backend | 9 | ✅ done | task/25-search-cli | 08, 21, 23 |
 
 ### Wave 10 — Radar Core (sequential)
 
