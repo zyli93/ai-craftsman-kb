@@ -1,10 +1,24 @@
-"""AI Craftsman KB — command line interface."""
+"""AI Craftsman KB — command line interface.
+
+All output formatting is delegated to ``cli_output`` so this module stays
+thin: parse options, call business logic, pass results to the printer.
+"""
 import asyncio
 import logging
 from pathlib import Path
 
 import click
 
+from .cli_output import (
+    console,
+    make_ingest_progress,
+    print_entities,
+    print_error,
+    print_ingest_report,
+    print_stats,
+    print_success,
+    print_warning,
+)
 from .config import load_config
 from .config.models import AppConfig
 
@@ -42,6 +56,7 @@ def cli(ctx: click.Context, config_dir: str | None, verbose: bool) -> None:
     else:
         logging.basicConfig(level=logging.WARNING)
     ctx.obj["config"] = load_config(Path(config_dir) if config_dir else None)
+    ctx.obj["verbose"] = verbose
 
 
 # ── Ingest ────────────────────────────────────────────────────────────────────
@@ -59,9 +74,9 @@ def ingest_pro(ctx: click.Context, source: str | None) -> None:
     config: AppConfig = ctx.obj["config"]
 
     async def _run() -> None:
-        from .db.sqlite import init_db, get_db  # noqa: F401
+        from .db.sqlite import init_db
+        from .ingestors.runner import IngestReport, IngestRunner, get_ingestor
         from .llm.router import LLMRouter
-        from .ingestors.runner import IngestRunner, get_ingestor
 
         data_dir = _get_data_dir(config)
         db_path = data_dir / "craftsman.db"
@@ -76,21 +91,45 @@ def ingest_pro(ctx: click.Context, source: str | None) -> None:
             try:
                 ingestor = get_ingestor(source, config)
             except ValueError as e:
-                click.echo(f"Error: {e}", err=True)
+                print_error(str(e), hint="Use one of: hn, substack, reddit, arxiv, youtube, rss, devto")
                 return
-            reports = [await runner.run_source(ingestor)]
-        else:
-            reports = await runner.run_all()
 
-        for r in reports:
-            err_count = len(r.errors)
-            click.echo(
-                f"{r.source_type}: fetched={r.fetched} "
-                f"passed={r.passed_filter} stored={r.stored} "
-                f"dupes={r.skipped_duplicate} errors={err_count}"
-            )
-            for err in r.errors:
-                click.echo(f"  ERROR: {err}", err=True)
+            reports: list[IngestReport] = []
+            with make_ingest_progress() as progress:
+                task_id = progress.add_task(f"Ingesting {source}...", total=None)
+                report = await runner.run_source(ingestor)
+                progress.update(
+                    task_id,
+                    completed=report.stored,
+                    total=report.fetched,
+                    description=f"[green]Done {source}: {report.stored} stored",
+                )
+            reports.append(report)
+        else:
+            from .ingestors.runner import INGESTORS
+
+            reports = []
+            with make_ingest_progress() as progress:
+                for source_type, ingestor_cls in INGESTORS.items():
+                    task_id = progress.add_task(f"Ingesting {source_type}...", total=None)
+                    try:
+                        ingestor = ingestor_cls(config)
+                        report = await runner.run_source(ingestor)
+                    except Exception as e:
+                        logger.error("Ingestor %s failed: %s", source_type, e)
+                        report = IngestReport(
+                            source_type=source_type,
+                            errors=[f"init failed: {e}"],
+                        )
+                    progress.update(
+                        task_id,
+                        completed=report.stored,
+                        total=report.fetched if report.fetched else 0,
+                        description=f"[green]Done {source_type}: {report.stored} stored",
+                    )
+                    reports.append(report)
+
+        print_ingest_report(reports)
 
     asyncio.run(_run())
 
@@ -118,8 +157,13 @@ def search(
     mode: str,
 ) -> None:
     """Search indexed content."""
-    config: AppConfig = ctx.obj["config"]
-    click.echo(f"[search] query={query!r} mode={mode} limit={limit} — not yet implemented")
+    config: AppConfig = ctx.obj["config"]  # noqa: F841 — used when search is implemented
+    # Search engine not yet implemented — show a placeholder notice
+    console.print(
+        f"[dim]search:[/dim] query=[bold]{query!r}[/bold] "
+        f"mode={mode} limit={limit} sources={list(source) or 'all'}"
+    )
+    console.print("[yellow]Search not yet implemented (task_21).[/yellow]")
 
 
 # ── Ingest URL ────────────────────────────────────────────────────────────────
@@ -130,8 +174,11 @@ def search(
 @click.pass_context
 def ingest_url(ctx: click.Context, url: str, tag: tuple[str, ...]) -> None:
     """Ingest a single URL into the index."""
-    config: AppConfig = ctx.obj["config"]
-    click.echo(f"[ingest-url] url={url!r} tags={list(tag)} — not yet implemented")
+    config: AppConfig = ctx.obj["config"]  # noqa: F841
+    console.print(
+        f"[dim]ingest-url:[/dim] url=[bold]{url!r}[/bold] tags={list(tag)}"
+    )
+    console.print("[yellow]Adhoc URL ingest not yet implemented (task_16).[/yellow]")
 
 
 # ── Entities ──────────────────────────────────────────────────────────────────
@@ -142,8 +189,49 @@ def ingest_url(ctx: click.Context, url: str, tag: tuple[str, ...]) -> None:
 @click.pass_context
 def entities(ctx: click.Context, entity_type: str | None, top: int) -> None:
     """List top entities by mention count."""
-    config: AppConfig = ctx.obj["config"]
-    click.echo(f"[entities] type={entity_type} top={top} — not yet implemented")
+    config: AppConfig = ctx.obj["config"]  # noqa: F841
+
+    async def _run() -> None:
+        try:
+            import json as _json
+
+            from .db.models import EntityRow
+            from .db.queries import search_entities_fts
+            from .db.sqlite import get_db, init_db
+
+            data_dir = _get_data_dir(config)
+            await init_db(data_dir)
+            async with get_db(data_dir) as conn:
+                # When entity_type filter is given, use FTS to narrow down;
+                # otherwise list all entities ordered by mention_count.
+                if entity_type:
+                    entity_rows = await search_entities_fts(conn, entity_type, limit=top)
+                else:
+                    async with conn.execute(
+                        "SELECT * FROM entities ORDER BY mention_count DESC LIMIT ?",
+                        (top,),
+                    ) as cursor:
+                        raw_rows = await cursor.fetchall()
+
+                    def _parse(row) -> EntityRow:
+                        # aiosqlite.Row supports key access; convert to dict manually
+                        d = {k: row[k] for k in row.keys()}
+                        if isinstance(d.get("metadata"), str):
+                            try:
+                                d["metadata"] = _json.loads(d["metadata"])
+                            except Exception:
+                                d["metadata"] = {}
+                        return EntityRow(**d)
+
+                    entity_rows = [_parse(r) for r in raw_rows]
+
+            print_entities(entity_rows)
+        except Exception as e:
+            print_error(f"Could not list entities: {e}")
+            if ctx.obj.get("verbose"):
+                console.print_exception()
+
+    asyncio.run(_run())
 
 
 # ── Radar ─────────────────────────────────────────────────────────────────────
@@ -155,8 +243,11 @@ def entities(ctx: click.Context, entity_type: str | None, top: int) -> None:
 @click.pass_context
 def radar(ctx: click.Context, query: str, source: tuple[str, ...], since: str | None) -> None:
     """Search the open web on-demand for a topic."""
-    config: AppConfig = ctx.obj["config"]
-    click.echo(f"[radar] query={query!r} sources={list(source)} — not yet implemented")
+    config: AppConfig = ctx.obj["config"]  # noqa: F841
+    console.print(
+        f"[dim]radar:[/dim] query=[bold]{query!r}[/bold] sources={list(source) or 'all'}"
+    )
+    console.print("[yellow]Radar not yet implemented (task_26).[/yellow]")
 
 
 # ── Briefing ──────────────────────────────────────────────────────────────────
@@ -168,8 +259,12 @@ def radar(ctx: click.Context, query: str, source: tuple[str, ...], since: str | 
 @click.pass_context
 def briefing(ctx: click.Context, topic: str, run_radar: bool, run_ingest: bool) -> None:
     """Generate a content briefing on a topic."""
-    config: AppConfig = ctx.obj["config"]
-    click.echo(f"[briefing] topic={topic!r} radar={run_radar} ingest={run_ingest} — not yet implemented")
+    config: AppConfig = ctx.obj["config"]  # noqa: F841
+    console.print(
+        f"[dim]briefing:[/dim] topic=[bold]{topic!r}[/bold] "
+        f"radar={run_radar} ingest={run_ingest}"
+    )
+    console.print("[yellow]Briefing generator not yet implemented (task_41).[/yellow]")
 
 
 # ── Server ────────────────────────────────────────────────────────────────────
@@ -182,7 +277,10 @@ def server(ctx: click.Context, host: str, port: int | None) -> None:
     """Start the FastAPI backend + dashboard."""
     config: AppConfig = ctx.obj["config"]
     effective_port = port or config.settings.server.backend_port
-    click.echo(f"[server] Starting on {host}:{effective_port} — not yet implemented")
+    console.print(
+        f"[dim]server:[/dim] Starting on [bold]{host}:{effective_port}[/bold]"
+    )
+    console.print("[yellow]Server command not yet implemented (task_40).[/yellow]")
 
 
 # ── Stats ─────────────────────────────────────────────────────────────────────
@@ -195,8 +293,8 @@ def stats(ctx: click.Context) -> None:
     data_dir = _get_data_dir(config)
 
     async def _stats() -> dict[str, int]:
-        from .db.sqlite import get_db, init_db
         from .db.queries import get_stats
+        from .db.sqlite import get_db, init_db
 
         # Ensure schema exists before querying — safe to call on existing DBs
         await init_db(data_dir)
@@ -205,11 +303,11 @@ def stats(ctx: click.Context) -> None:
 
     try:
         result = asyncio.run(_stats())
-        click.echo("=== AI Craftsman KB Stats ===")
-        for key, val in result.items():
-            click.echo(f"  {key}: {val}")
+        print_stats(result)
     except Exception as e:
-        click.echo(f"Error fetching stats: {e}", err=True)
+        print_error(f"Error fetching stats: {e}")
+        if ctx.obj.get("verbose"):
+            console.print_exception()
 
 
 # ── Doctor ────────────────────────────────────────────────────────────────────
@@ -225,18 +323,30 @@ def doctor(ctx: click.Context) -> None:
     providers = config.settings.providers
     for name, pcfg in providers.items():
         if name != "ollama" and not pcfg.api_key:
-            issues.append(f"  - {name}: API key not set")
+            issues.append(f"{name}: API key not set")
 
     # Resolve data directory
     data_dir = Path(config.settings.data_dir).expanduser()
 
-    click.echo("=== AI Craftsman KB Doctor ===")
-    click.echo("Config loaded: OK")
-    click.echo(f"Data dir: {data_dir} ({'exists' if data_dir.exists() else 'will be created'})")
+    from rich.panel import Panel
+    from rich.table import Table
+
+    check_table = Table(box=None, show_header=False, pad_edge=False)
+    check_table.add_column("Check", style="bold")
+    check_table.add_column("Status")
+
+    check_table.add_row("Config loaded", "[green]OK[/green]")
+    check_table.add_row(
+        "Data directory",
+        f"{data_dir} ([green]exists[/green])" if data_dir.exists()
+        else f"{data_dir} ([dim]will be created[/dim])",
+    )
+
+    console.print(Panel(check_table, title="[bold blue]AI Craftsman KB Doctor[/bold blue]", expand=False))
 
     if issues:
-        click.echo("\nWarnings:")
+        console.print("\n[bold yellow]Warnings:[/bold yellow]")
         for issue in issues:
-            click.echo(issue)
+            print_warning(issue)
     else:
-        click.echo("All checks passed.")
+        print_success("All checks passed.")

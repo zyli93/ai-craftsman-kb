@@ -18,9 +18,14 @@ from ..db.queries import (
 from ..db.sqlite import get_db
 from ..llm.router import LLMRouter
 from ..processing.filter import ContentFilter
+from .arxiv import ArxivIngestor
 from .base import BaseIngestor
+from .devto import DevtoIngestor
 from .hackernews import HackerNewsIngestor
+from .reddit import RedditIngestor
 from .rss import RSSIngestor
+from .substack import SubstackIngestor
+from .youtube import YouTubeIngestor
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +33,12 @@ logger = logging.getLogger(__name__)
 # Registry of available ingestors — extended by later tasks (10-15)
 INGESTORS: dict[str, type[BaseIngestor]] = {
     "hn": HackerNewsIngestor,
+    "arxiv": ArxivIngestor,
+    "devto": DevtoIngestor,
+    "reddit": RedditIngestor,
     "rss": RSSIngestor,
+    "substack": SubstackIngestor,
+    "youtube": YouTubeIngestor,
 }
 
 

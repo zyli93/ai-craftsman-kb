@@ -1,17 +1,15 @@
-# Source Discovery Prompt
-# Used by: backend/ai_craftsman_kb/source_discovery.py (task_42)
+You are helping someone discover new content sources to follow in their RSS/subscription reader.
 
-Given the following list of URLs and text snippets found on a webpage, identify which ones
-are likely to be high-quality AI/ML content sources worth following regularly.
+Here are 20 recent articles they've been reading:
 
-For each promising source, return:
-- "url": the normalized URL (string)
-- "source_type": one of: substack, rss, youtube, reddit, arxiv, devto, website
-- "reason": why this looks like a good source (max 15 words)
-- "confidence": float from 0.0 to 1.0
+{article_list}
 
-Links found:
-{links}
+Based on this reading pattern, suggest 5 new sources they should follow.
+For each suggestion:
+- source_type: one of [substack, youtube, reddit, rss, arxiv, devto]
+- identifier: the specific slug/handle/subreddit/URL
+- display_name: friendly name
+- reason: one sentence why this source would be valuable
 
-Return a JSON array. Omit links that are clearly not content sources (ads, navigation, etc.).
-Return only valid JSON. No explanation outside the JSON array.
+Return ONLY a JSON array with no other text:
+[{"source_type": "...", "identifier": "...", "display_name": "...", "reason": "..."}, ...]
