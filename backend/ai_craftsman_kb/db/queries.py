@@ -24,12 +24,25 @@ logger = logging.getLogger(__name__)
 # JSON column names that need serialization/deserialization
 _JSON_COLUMNS = {"metadata", "user_tags", "config", "source_document_ids"}
 
+# Default values for JSON columns when the DB value is NULL.
+# These mirror the Pydantic model field defaults so that
+# DocumentRow(**row_dict) and similar model constructions succeed
+# even when a JSON column has never been written (NULL in SQLite).
+_JSON_COLUMN_DEFAULTS: dict[str, Any] = {
+    "metadata": {},
+    "user_tags": [],
+    "config": {},
+    "source_document_ids": [],
+}
+
 
 def _row_to_dict(row: aiosqlite.Row) -> dict[str, Any]:
     """Convert an aiosqlite.Row to a plain dict, deserializing JSON columns.
 
     JSON columns are stored as TEXT in SQLite. This helper parses them back
     to Python objects (dict or list). Non-JSON text columns are returned as-is.
+    NULL values for JSON columns are replaced with the appropriate default
+    (empty dict or empty list) so that Pydantic model construction succeeds.
 
     Args:
         row: An aiosqlite.Row object from a cursor fetch.
@@ -40,11 +53,17 @@ def _row_to_dict(row: aiosqlite.Row) -> dict[str, Any]:
     result: dict[str, Any] = {}
     for key in row.keys():
         value = row[key]
-        if key in _JSON_COLUMNS and isinstance(value, str):
-            try:
-                result[key] = json.loads(value)
-            except (json.JSONDecodeError, ValueError):
-                # Fall back to raw value if JSON parsing fails
+        if key in _JSON_COLUMNS:
+            if value is None:
+                # NULL in DB — use the Pydantic model's default value
+                result[key] = _JSON_COLUMN_DEFAULTS.get(key)
+            elif isinstance(value, str):
+                try:
+                    result[key] = json.loads(value)
+                except (json.JSONDecodeError, ValueError):
+                    # Fall back to raw value if JSON parsing fails
+                    result[key] = value
+            else:
                 result[key] = value
         else:
             result[key] = value
