@@ -15,6 +15,7 @@ from .cli_output import (
     print_entities,
     print_error,
     print_ingest_report,
+    print_radar_report,
     print_stats,
     print_success,
     print_warning,
@@ -174,11 +175,52 @@ def search(
 @click.pass_context
 def ingest_url(ctx: click.Context, url: str, tag: tuple[str, ...]) -> None:
     """Ingest a single URL into the index."""
-    config: AppConfig = ctx.obj["config"]  # noqa: F841
-    console.print(
-        f"[dim]ingest-url:[/dim] url=[bold]{url!r}[/bold] tags={list(tag)}"
-    )
-    console.print("[yellow]Adhoc URL ingest not yet implemented (task_16).[/yellow]")
+    config: AppConfig = ctx.obj["config"]
+    tags = list(tag)
+
+    async def _run() -> None:
+        from .db.queries import get_document_by_url, upsert_document
+        from .db.sqlite import get_db, init_db
+        from .ingestors.adhoc import AdhocIngestor
+
+        data_dir = _get_data_dir(config)
+        await init_db(data_dir)
+
+        console.print(f"[dim]Ingesting:[/dim] [bold]{url}[/bold]")
+        if tags:
+            console.print(f"[dim]Tags:[/dim] {tags}")
+
+        ingestor = AdhocIngestor(config)
+        try:
+            doc = await ingestor.ingest_url(url, tags=tags)
+        except Exception as exc:
+            print_error(f"Failed to ingest URL: {exc}")
+            return
+
+        async with get_db(data_dir) as conn:
+            # Deduplicate: skip if already indexed
+            existing = await get_document_by_url(conn, doc.url)
+            if existing is not None:
+                print_warning(f"URL already indexed: {doc.url}")
+                return
+
+            doc_row = doc.to_document_row(source_id=None)
+            # Populate user_tags from adhoc_tags metadata
+            adhoc_tags = doc.metadata.get("adhoc_tags", [])
+            if adhoc_tags:
+                doc_row = doc_row.model_copy(update={"user_tags": adhoc_tags})
+            await upsert_document(conn, doc_row)
+            await conn.commit()
+
+        content_summary = (
+            f"{doc.word_count} words" if doc.word_count else "no content extracted"
+        )
+        print_success(
+            f"Ingested [{doc.content_type or 'unknown'}] "
+            f"{doc.title or repr(doc.url)} ({content_summary})"
+        )
+
+    asyncio.run(_run())
 
 
 # ── Entities ──────────────────────────────────────────────────────────────────
@@ -239,15 +281,187 @@ def entities(ctx: click.Context, entity_type: str | None, top: int) -> None:
 @cli.command("radar")
 @click.argument("query")
 @click.option("--source", type=str, multiple=True, help="Limit to these source types (repeatable)")
-@click.option("--since", type=str, default=None)
+@click.option("--since", type=str, default=None, help="Only results after this date (ISO format)")
+@click.option("--limit", type=int, default=10, show_default=True, help="Max results per source")
 @click.pass_context
-def radar(ctx: click.Context, query: str, source: tuple[str, ...], since: str | None) -> None:
-    """Search the open web on-demand for a topic."""
-    config: AppConfig = ctx.obj["config"]  # noqa: F841
-    console.print(
-        f"[dim]radar:[/dim] query=[bold]{query!r}[/bold] sources={list(source) or 'all'}"
-    )
-    console.print("[yellow]Radar not yet implemented (task_26).[/yellow]")
+def radar(
+    ctx: click.Context,
+    query: str,
+    source: tuple[str, ...],
+    since: str | None,
+    limit: int,
+) -> None:
+    """Search the open web on-demand for a topic.
+
+    Fans out concurrently to all enabled radar sources (HN, Reddit, ArXiv,
+    DEV.to, YouTube), deduplicates results by URL, stores new documents with
+    origin='radar', and prints a numbered list with document IDs for triage.
+
+    Use ``cr promote <id>`` to add a radar result to the pro tier.
+    """
+    config: AppConfig = ctx.obj["config"]
+
+    async def _run() -> None:
+        from .db.queries import list_documents
+        from .db.sqlite import get_db, init_db
+        from .ingestors.runner import INGESTORS
+        from .radar.engine import RadarEngine
+
+        data_dir = _get_data_dir(config)
+        await init_db(data_dir)
+
+        # Instantiate all available ingestors — only those that support
+        # search_radar() will return results; others yield an empty list.
+        ingestors = {}
+        for source_type, ingestor_cls in INGESTORS.items():
+            try:
+                ingestors[source_type] = ingestor_cls(config)
+            except Exception as e:
+                logger.debug("Could not instantiate ingestor %s: %s", source_type, e)
+
+        async with get_db(data_dir) as conn:
+            engine = RadarEngine(config, ingestors)
+            report = await engine.search(
+                conn=conn,
+                query=query,
+                sources=list(source) if source else None,
+                limit_per_source=limit,
+            )
+
+            # Load the newly ingested radar documents to display them
+            radar_docs = await list_documents(
+                conn,
+                origin="radar",
+                limit=report.total_found if report.total_found > 0 else 100,
+            )
+
+        # Show results — radar_docs may include older entries; display most recent
+        # up to total_found to focus on the current search batch
+        displayed_docs = radar_docs[: report.total_found] if report.total_found else []
+        duplicate_count = report.total_found - report.new_documents
+        print_radar_report(
+            results=displayed_docs,
+            query=query,
+            new_count=report.new_documents,
+            duplicate_count=max(0, duplicate_count),
+        )
+
+        if report.errors:
+            for src, err in report.errors.items():
+                print_warning(f"[{src}] {err}")
+
+    try:
+        asyncio.run(_run())
+    except Exception as e:
+        print_error(f"Radar search failed: {e}")
+        if ctx.obj.get("verbose"):
+            console.print_exception()
+
+
+# ── Triage ────────────────────────────────────────────────────────────────────
+
+@cli.command("promote")
+@click.argument("document_id")
+@click.pass_context
+def promote(ctx: click.Context, document_id: str) -> None:
+    """Promote a radar result to pro tier (set promoted_at timestamp).
+
+    After promoting, the document appears alongside pro-tier documents in
+    search results. Use the document ID shown by ``cr radar``.
+    """
+    config: AppConfig = ctx.obj["config"]
+
+    async def _run() -> None:
+        from .db.queries import get_document, promote_document
+        from .db.sqlite import get_db, init_db
+
+        data_dir = _get_data_dir(config)
+        await init_db(data_dir)
+        async with get_db(data_dir) as conn:
+            doc = await get_document(conn, document_id)
+            if doc is None:
+                print_error(f"Document not found: {document_id}")
+                return
+            await promote_document(conn, document_id)
+            title = doc.title or "(no title)"
+            print_success(f"Promoted: \"{title}\" ({document_id[:8]}...)")
+
+    try:
+        asyncio.run(_run())
+    except Exception as e:
+        print_error(f"Promote failed: {e}")
+        if ctx.obj.get("verbose"):
+            console.print_exception()
+
+
+@cli.command("archive")
+@click.argument("document_id")
+@click.pass_context
+def archive(ctx: click.Context, document_id: str) -> None:
+    """Archive a document (hide from default views).
+
+    Archived documents are excluded from search and list views by default.
+    The document is not deleted and can be recovered.
+    """
+    config: AppConfig = ctx.obj["config"]
+
+    async def _run() -> None:
+        from .db.queries import archive_document, get_document
+        from .db.sqlite import get_db, init_db
+
+        data_dir = _get_data_dir(config)
+        await init_db(data_dir)
+        async with get_db(data_dir) as conn:
+            doc = await get_document(conn, document_id)
+            if doc is None:
+                print_error(f"Document not found: {document_id}")
+                return
+            await archive_document(conn, document_id)
+            title = doc.title or "(no title)"
+            print_success(f"Archived: \"{title}\" ({document_id[:8]}...)")
+
+    try:
+        asyncio.run(_run())
+    except Exception as e:
+        print_error(f"Archive failed: {e}")
+        if ctx.obj.get("verbose"):
+            console.print_exception()
+
+
+@cli.command("delete")
+@click.argument("document_id")
+@click.confirmation_option(prompt="Delete this document permanently?")
+@click.pass_context
+def delete(ctx: click.Context, document_id: str) -> None:
+    """Soft-delete a document (set deleted_at timestamp).
+
+    The document is excluded from all search and list views but is NOT
+    physically removed from the database. Pass --yes to skip the confirmation
+    prompt (useful in scripts).
+    """
+    config: AppConfig = ctx.obj["config"]
+
+    async def _run() -> None:
+        from .db.queries import get_document, soft_delete_document
+        from .db.sqlite import get_db, init_db
+
+        data_dir = _get_data_dir(config)
+        await init_db(data_dir)
+        async with get_db(data_dir) as conn:
+            doc = await get_document(conn, document_id)
+            if doc is None:
+                print_error(f"Document not found: {document_id}")
+                return
+            await soft_delete_document(conn, document_id)
+            title = doc.title or "(no title)"
+            print_success(f"Deleted: \"{title}\" ({document_id[:8]}...)")
+
+    try:
+        asyncio.run(_run())
+    except Exception as e:
+        print_error(f"Delete failed: {e}")
+        if ctx.obj.get("verbose"):
+            console.print_exception()
 
 
 # ── Briefing ──────────────────────────────────────────────────────────────────

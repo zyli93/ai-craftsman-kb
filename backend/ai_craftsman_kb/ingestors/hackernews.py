@@ -1,15 +1,20 @@
 """Hacker News ingestor using the Algolia HN Search API."""
+import asyncio
 import logging
 from datetime import datetime
 
 import httpx
 
 from ..config.models import AppConfig
+from ..processing.extractor import ContentExtractor
 from .base import BaseIngestor, RawDocument
 
 logger = logging.getLogger(__name__)
 
 ALGOLIA_BASE = "https://hn.algolia.com/api/v1"
+
+# Maximum concurrent content fetches for link stories in radar mode
+_RADAR_FETCH_CONCURRENCY = 5
 
 
 class HackerNewsIngestor(BaseIngestor):
@@ -83,6 +88,13 @@ class HackerNewsIngestor(BaseIngestor):
         Uses the /search endpoint (relevance-ranked) with a minimum points filter
         to avoid surfacing low-quality results. Does not require authentication.
 
+        For link stories (external URL), fetches article content via ContentExtractor
+        using a bounded semaphore (concurrency=5). Text-only stories (Ask HN) already
+        have content from story_text and do not require an additional fetch.
+
+        Per-document content fetch errors are logged and skipped — they do not
+        interrupt results from other stories.
+
         Args:
             query: The keyword or phrase to search for on HN.
             limit: Maximum number of results to return (capped at 50).
@@ -107,7 +119,57 @@ class HackerNewsIngestor(BaseIngestor):
         docs: list[RawDocument] = []
         for hit in data.get("hits", [])[:limit]:
             docs.append(self._hit_to_raw_doc(hit, origin="radar"))
+
+        # Fetch article content for link stories with bounded concurrency
+        semaphore = asyncio.Semaphore(_RADAR_FETCH_CONCURRENCY)
+        tasks = [
+            self._fetch_content_with_semaphore(doc, semaphore)
+            for doc in docs
+        ]
+        docs = await asyncio.gather(*tasks)  # type: ignore[assignment]
         return docs
+
+    async def _fetch_content_with_semaphore(
+        self,
+        doc: RawDocument,
+        semaphore: asyncio.Semaphore,
+    ) -> RawDocument:
+        """Fetch article content for a link story using ContentExtractor.
+
+        Text-only stories (Ask HN) already have raw_content set and are returned
+        unchanged. For link stories, fetches content via ContentExtractor within
+        the provided semaphore to cap concurrency.
+
+        Per-document errors are caught, logged, and the original doc (without
+        content) is returned so other results are not affected.
+
+        Args:
+            doc: A RawDocument from search_radar(), possibly without raw_content.
+            semaphore: Asyncio semaphore to cap concurrent content fetches.
+
+        Returns:
+            The RawDocument, with raw_content populated if successfully fetched.
+        """
+        if doc.raw_content is not None:
+            # Text-only story — content already present, no fetch needed
+            return doc
+
+        async with semaphore:
+            try:
+                async with ContentExtractor() as extractor:
+                    extracted = await extractor.fetch_and_extract(doc.url)
+                return doc.model_copy(
+                    update={
+                        "raw_content": extracted.text,
+                        "word_count": extracted.word_count,
+                        "title": doc.title or extracted.title,
+                    }
+                )
+            except Exception as exc:
+                logger.warning(
+                    "HN radar: failed to fetch content for %s: %s", doc.url, exc
+                )
+                return doc
 
     def _hit_to_raw_doc(self, hit: dict, origin: str = "pro") -> RawDocument:
         """Map an Algolia HN hit to a RawDocument.

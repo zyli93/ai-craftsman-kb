@@ -1,3 +1,4 @@
+from .adhoc import AdhocIngestor
 from .arxiv import ArxivIngestor
 from .base import BaseIngestor, RawDocument
 from .devto import DevtoIngestor
@@ -7,6 +8,7 @@ from .substack import SubstackIngestor
 from .youtube import YouTubeIngestor
 
 __all__ = [
+    "AdhocIngestor",
     "ArxivIngestor",
     "BaseIngestor",
     "DevtoIngestor",

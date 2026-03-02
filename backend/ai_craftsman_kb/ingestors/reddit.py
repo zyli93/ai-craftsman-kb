@@ -17,6 +17,7 @@ from datetime import datetime, timezone
 import httpx
 
 from ..config.models import AppConfig
+from ..processing.extractor import ContentExtractor
 from .base import BaseIngestor, RawDocument
 
 logger = logging.getLogger(__name__)
@@ -30,6 +31,10 @@ _RATE_LIMIT_DELAY = 0.6
 
 # Minimum selftext length to consider a self-post worth storing
 _MIN_SELFTEXT_LEN = 50
+
+# Maximum concurrent content fetches for link posts in radar mode
+# Kept lower than other sources to respect Reddit's rate limits
+_RADAR_FETCH_CONCURRENCY = 3
 
 
 class RedditIngestor(BaseIngestor):
@@ -135,6 +140,13 @@ class RedditIngestor(BaseIngestor):
         Uses Reddit's /search endpoint with sort=relevance and type=link.
         Searches across all subreddits (no subreddit restriction).
 
+        For self-posts, raw_content is the selftext. For link posts, fetches
+        article content via ContentExtractor using bounded concurrency (semaphore
+        with max 3 concurrent fetches to respect Reddit's rate limits).
+
+        Per-document content fetch errors are logged and skipped — they do not
+        interrupt results from other posts.
+
         Args:
             query: The search query string.
             limit: Maximum number of results (capped at 100 by Reddit).
@@ -182,7 +194,60 @@ class RedditIngestor(BaseIngestor):
             if doc is not None:
                 docs.append(doc)
 
+        # Fetch article content for link posts with bounded concurrency.
+        # Self-posts already have raw_content from selftext.
+        semaphore = asyncio.Semaphore(_RADAR_FETCH_CONCURRENCY)
+        tasks = [
+            self._fetch_content_with_semaphore(doc, semaphore)
+            for doc in docs
+        ]
+        docs = await asyncio.gather(*tasks)  # type: ignore[assignment]
         return docs
+
+    async def _fetch_content_with_semaphore(
+        self,
+        doc: RawDocument,
+        semaphore: asyncio.Semaphore,
+    ) -> RawDocument:
+        """Fetch article content for a link post using ContentExtractor.
+
+        Self-posts already have raw_content set and are returned unchanged.
+        For link posts (raw_content=None), fetches content via ContentExtractor
+        within the provided semaphore to cap concurrency.
+
+        Per-document errors are caught, logged, and the original doc (without
+        content) is returned so other results are not affected.
+
+        Args:
+            doc: A RawDocument from search_radar(), possibly without raw_content.
+            semaphore: Asyncio semaphore to cap concurrent content fetches.
+
+        Returns:
+            The RawDocument, with raw_content populated if successfully fetched.
+        """
+        if doc.raw_content is not None:
+            # Self-post — content already present, no fetch needed
+            return doc
+
+        async with semaphore:
+            try:
+                # For link posts, fetch the linked URL (external article), not the
+                # Reddit discussion permalink. The linked_url is stored in metadata.
+                linked_url = doc.metadata.get("linked_url") or doc.url
+                async with ContentExtractor() as extractor:
+                    extracted = await extractor.fetch_and_extract(linked_url)
+                return doc.model_copy(
+                    update={
+                        "raw_content": extracted.text,
+                        "word_count": extracted.word_count,
+                        "title": doc.title or extracted.title,
+                    }
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Reddit radar: failed to fetch content for %s: %s", doc.url, exc
+                )
+                return doc
 
     # ------------------------------------------------------------------
     # Internal helpers

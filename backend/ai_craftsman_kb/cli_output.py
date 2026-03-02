@@ -25,6 +25,7 @@ from rich.text import Text
 if TYPE_CHECKING:
     from .db.models import DocumentRow, EntityRow
     from .ingestors.runner import IngestReport
+    from .radar.engine import RadarReport as RadarEngineReport
 
 # ---------------------------------------------------------------------------
 # Console singleton — created without an explicit file so that Rich resolves
@@ -297,7 +298,7 @@ def print_radar_results(docs: list[DocumentRow], topic: str = "") -> None:
             date = doc.published_at[:10] if doc.published_at else "—"
             lines.append(f"  {i}. {title}  [dim]{date}[/dim]")
             if doc.url:
-                lines.append(f"     [dim link={doc.url}]{doc.url}[/dim]")
+                lines.append(f"     [link={doc.url}][dim]{doc.url}[/dim][/link]")
 
         panel_body = "\n".join(lines)
         panel = Panel(
@@ -306,6 +307,72 @@ def print_radar_results(docs: list[DocumentRow], topic: str = "") -> None:
             expand=False,
         )
         console.print(panel)
+
+
+def print_radar_report(
+    results: list,
+    query: str,
+    new_count: int,
+    duplicate_count: int,
+) -> None:
+    """Print a numbered list of radar search results with triage hints.
+
+    Outputs a numbered list showing source badge, title, URL, date, and
+    document ID. A summary line at the bottom shows new vs duplicate counts
+    and prompts the user to use ``cr promote <id>`` for triage.
+
+    Each entry follows the format::
+
+        1. [ARXIV] "Title of the document"
+           arxiv.org/... · Jan 15, 2025
+           Document ID: abc-123
+
+    Args:
+        results: A list of DocumentRow objects to display.
+        query: The search query string shown in the header.
+        new_count: Number of newly ingested documents in this run.
+        duplicate_count: Number of documents already in DB.
+    """
+    if not results:
+        console.print("[yellow]No results found for query:[/yellow] " + query)
+        return
+
+    # Determine source labels from results
+    sources_found: list[str] = sorted({doc.source_type for doc in results})
+    sources_str = ", ".join(sources_found)
+    console.print(f"\nSearching across: {sources_str}...\n")
+
+    for i, doc in enumerate(results, 1):
+        source_type = doc.source_type.upper()
+        # Pad source badge to 6 chars for alignment
+        badge = f"[{source_type:<5}]"
+        title = doc.title or "(no title)"
+        url = doc.url or ""
+
+        # Format date + optional metadata (e.g. HN points from metadata)
+        date_str = doc.published_at[:10] if doc.published_at else "—"
+        points = doc.metadata.get("score") or doc.metadata.get("points")
+        points_str = f" · {points} points" if points else ""
+
+        # Extract domain for display
+        domain = url.split("/")[2] if url.startswith("http") else url
+
+        console.print(f"  {i}. [{source_type}] \"{title}\"")
+        console.print(f"     {domain} · {date_str}{points_str}")
+        # Show a short snippet from content if available
+        if doc.raw_content:
+            snippet = doc.raw_content[:120].replace("\n", " ").strip()
+            if len(doc.raw_content) > 120:
+                snippet += "..."
+            console.print(f"     [dim]{snippet}[/dim]")
+        console.print(f"     [dim]Document ID:[/dim] {doc.id}")
+        console.print()
+
+    console.print(
+        f"Found [bold green]{new_count} new[/bold green], "
+        f"[dim]{duplicate_count} duplicates[/dim]. "
+        "Run [bold]cr promote <id>[/bold] to add to pro tier."
+    )
 
 
 # ---------------------------------------------------------------------------

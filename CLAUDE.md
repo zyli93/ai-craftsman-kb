@@ -93,6 +93,20 @@ Check .claude/tasks/STATUS.md for task status tracker.
 Each task is defined in `.claude/tasks/task_XX.md`. Read the task file
 before starting work. Update STATUS.md when you begin and complete a task.
 
+## Context Management
+
+**One task per context window.** Clear context after each task completes.
+
+- All project state lives in files (STATUS.md, CLAUDE.md, task files, code)
+- Never rely on remembering code from earlier in the conversation — always re-read
+- Stale context causes drift: hallucinated file contents, wrong assumptions, inconsistencies
+- Worktree-isolated subagents already get fresh context per task — persistent sessions should behave the same way
+
+Pattern:
+```
+start task → read task file → read relevant source files → implement → push → CLEAR
+```
+
 ## IMPORTANT
 - Read plan.md for full architecture details before starting any task.
 - Read the specific task file completely before writing any code.

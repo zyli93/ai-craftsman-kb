@@ -283,6 +283,40 @@ async def update_document_flags(
     await conn.commit()
 
 
+async def promote_document(conn: aiosqlite.Connection, doc_id: str) -> None:
+    """Promote a radar document to the pro tier by setting promoted_at timestamp.
+
+    Promoted documents appear alongside pro-tier documents in search results.
+    The promoted_at timestamp records when the promotion occurred.
+
+    Args:
+        conn: An open aiosqlite connection.
+        doc_id: The document's UUID string.
+    """
+    await conn.execute(
+        "UPDATE documents SET promoted_at = CURRENT_TIMESTAMP WHERE id = ?",
+        (doc_id,),
+    )
+    await conn.commit()
+
+
+async def archive_document(conn: aiosqlite.Connection, doc_id: str) -> None:
+    """Archive a document by setting is_archived to True.
+
+    Archived documents are hidden from default views but are not deleted.
+    Use include_archived=True in list_documents to see archived documents.
+
+    Args:
+        conn: An open aiosqlite connection.
+        doc_id: The document's UUID string.
+    """
+    await conn.execute(
+        "UPDATE documents SET is_archived = TRUE WHERE id = ?",
+        (doc_id,),
+    )
+    await conn.commit()
+
+
 async def soft_delete_document(conn: aiosqlite.Connection, doc_id: str) -> None:
     """Soft-delete a document by setting deleted_at to the current timestamp.
 

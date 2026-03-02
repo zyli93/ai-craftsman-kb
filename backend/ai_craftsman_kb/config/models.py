@@ -89,6 +89,32 @@ class EmbeddingConfig(BaseModel):
     chunk_size: int = 2000
     chunk_overlap: int = 200
 
+    def dimensions_for_provider(self) -> int:
+        """Return the expected embedding vector dimension for the configured provider/model.
+
+        Used by VectorStore to create the Qdrant collection with the correct
+        vector size.
+
+        Returns:
+            Integer vector dimension (e.g. 1536 for OpenAI text-embedding-3-small).
+        """
+        if self.provider == "openai":
+            openai_dims: dict[str, int] = {
+                "text-embedding-3-small": 1536,
+                "text-embedding-3-large": 3072,
+                "text-embedding-ada-002": 1536,
+            }
+            return openai_dims.get(self.model, 1536)
+        elif "nomic" in self.model:
+            return 768
+        else:
+            # MiniLM and other sentence-transformers defaults
+            local_dims: dict[str, int] = {
+                "all-MiniLM-L6-v2": 384,
+                "all-mpnet-base-v2": 768,
+            }
+            return local_dims.get(self.model, 384)
+
 
 class LLMTaskConfig(BaseModel):
     """LLM provider + model for a specific task."""

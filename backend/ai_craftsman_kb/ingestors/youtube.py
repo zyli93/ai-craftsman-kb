@@ -150,22 +150,67 @@ class YouTubeIngestor(BaseIngestor):
         return docs
 
     async def search_radar(self, query: str, limit: int = 20) -> list[RawDocument]:
-        """Search YouTube for a keyword query and pull transcripts.
+        """Search YouTube for a keyword query and pull transcripts concurrently.
 
-        Only videos with available transcripts are included in results.
+        Over-fetches (limit * 2) to account for videos without available
+        transcripts. Transcripts are fetched concurrently via asyncio.gather.
+        Videos without transcripts are still included using their description
+        snippet as fallback content with metadata['has_transcript']=False.
 
         Args:
             query: The keyword or phrase to search for on YouTube.
-            limit: Maximum number of results to return (capped at 50 per API).
+            limit: Maximum number of results to return.
 
         Returns:
-            List of RawDocuments with origin='radar'. Returns [] if the API key
-            is missing or on request failure.
+            List of RawDocuments with origin='radar', sorted by API relevance.
+            Returns [] if the API key is missing. Returns partial results on
+            quotaExceeded error (whatever was collected before the error).
         """
         if not self._api_key:
             logger.warning("YouTube API key not configured — skipping YouTube radar search")
             return []
 
+        # Over-fetch to fill the limit even after filtering out no-transcript videos
+        fetch_count = min(limit * 2, 50)
+        search_results = await self._search_videos(query, fetch_count)
+        if not search_results:
+            return []
+
+        # Fetch all transcripts concurrently — I/O bound so asyncio.gather shines here
+        transcript_tasks = [
+            self._get_transcript_safe(r["id"]["videoId"]) for r in search_results
+        ]
+        transcripts = await asyncio.gather(*transcript_tasks)
+
+        docs: list[RawDocument] = []
+        fallback_count = 0  # count of no-transcript videos included as fallback
+        for result, transcript in zip(search_results, transcripts):
+            doc = self._snippet_to_raw_doc(result, transcript)
+            # Prefer videos with transcripts; only include no-transcript videos
+            # as fallback to fill up to limit // 2 slots.
+            if transcript is not None:
+                docs.append(doc)
+            elif fallback_count < limit // 2:
+                docs.append(doc)
+                fallback_count += 1
+            if len(docs) >= limit:
+                break
+
+        return docs
+
+    async def _search_videos(self, query: str, limit: int) -> list[dict]:
+        """Call the YouTube Data API v3 search.list endpoint.
+
+        Logs a warning on quota exceeded and returns an empty list rather than
+        raising, so the caller receives partial results gracefully.
+
+        Args:
+            query: The search query string.
+            limit: Maximum number of video results to request (capped at 50).
+
+        Returns:
+            List of raw API item dicts, or [] on error.
+        """
         params = {
             "part": "snippet",
             "q": query,
@@ -179,31 +224,98 @@ class YouTubeIngestor(BaseIngestor):
             resp = await self._client.get("/search", params=params)
             resp.raise_for_status()
             data = resp.json()
+            return data.get("items", [])
         except httpx.HTTPStatusError as exc:
-            self._handle_quota_error(exc)
-            logger.error("YouTube radar search failed for query '%s': %s", query, exc)
+            if exc.response.status_code == 403:
+                self._handle_quota_error(exc)
+            else:
+                logger.error(
+                    "YouTube radar search failed (HTTP %d) for query '%s': %s",
+                    exc.response.status_code,
+                    query,
+                    exc,
+                )
             return []
         except httpx.HTTPError as exc:
             logger.error("YouTube radar search failed for query '%s': %s", query, exc)
             return []
 
-        docs: list[RawDocument] = []
-        for item in data.get("items", [])[:limit]:
-            doc = self._item_to_raw_doc(item, origin="radar")
-            if doc is None:
-                continue
-            # Pull transcript; only include videos that have one
-            transcript = await self._get_transcript(doc.metadata["video_id"])
-            if transcript is not None:
-                doc = doc.model_copy(
-                    update={
-                        "raw_content": transcript,
-                        "word_count": len(transcript.split()),
-                    }
-                )
-                docs.append(doc)
+    async def _get_transcript_safe(self, video_id: str) -> str | None:
+        """Fetch a YouTube transcript, returning None on any error.
 
-        return docs
+        Wraps _get_transcript() to guarantee no exception propagation, making it
+        safe to use inside asyncio.gather() without cancelling other transcript
+        fetches if one fails.
+
+        Args:
+            video_id: The YouTube video ID.
+
+        Returns:
+            The transcript as plain text, or None if unavailable for any reason.
+        """
+        try:
+            return await self._get_transcript(video_id)
+        except Exception as exc:
+            logger.debug("_get_transcript_safe: error for %s: %s", video_id, exc)
+            return None
+
+    def _snippet_to_raw_doc(
+        self,
+        search_result: dict,
+        transcript: str | None,
+    ) -> RawDocument:
+        """Convert a YouTube search result and optional transcript to a RawDocument.
+
+        When a transcript is available it becomes raw_content; otherwise the
+        video's description snippet is used as a content stub. This ensures the
+        document is still indexable and filterable even without a transcript.
+
+        Args:
+            search_result: A single item dict from the YouTube search API response.
+            transcript: The transcript text, or None if unavailable.
+
+        Returns:
+            A RawDocument with origin='radar', content_type='video', and
+            metadata fields: video_id, channel_id, channel_title, description,
+            thumbnail_url, has_transcript.
+        """
+        video_id: str = search_result.get("id", {}).get("videoId", "")
+        snippet: dict = search_result.get("snippet", {})
+        title: str | None = snippet.get("title")
+        description: str = snippet.get("description", "")
+        channel_title: str = snippet.get("channelTitle", "")
+        channel_id: str = snippet.get("channelId", "")
+        published_at = _parse_iso_timestamp(snippet.get("publishedAt"))
+        thumbnails: dict = snippet.get("thumbnails", {})
+        # Prefer medium > default thumbnail URL
+        thumbnail_url: str | None = (
+            thumbnails.get("medium", {}).get("url")
+            or thumbnails.get("default", {}).get("url")
+        )
+
+        has_transcript = transcript is not None
+        raw_content = transcript if has_transcript else (description or None)
+        word_count = len(raw_content.split()) if raw_content else None
+
+        return RawDocument(
+            url=f"https://youtube.com/watch?v={video_id}",
+            title=title,
+            author=channel_title,
+            raw_content=raw_content,
+            content_type="video",
+            published_at=published_at,
+            source_type="youtube",
+            origin="radar",
+            word_count=word_count,
+            metadata={
+                "video_id": video_id,
+                "channel_id": channel_id,
+                "channel_title": channel_title,
+                "description": description,
+                "thumbnail_url": thumbnail_url,
+                "has_transcript": has_transcript,
+            },
+        )
 
     async def fetch_content(self, doc: RawDocument) -> RawDocument:
         """Override: use YouTube transcript instead of HTML extraction.

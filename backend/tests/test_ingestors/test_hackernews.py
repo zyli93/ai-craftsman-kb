@@ -270,7 +270,19 @@ async def test_search_radar_returns_documents() -> None:
 
     ingestor._client.get = mock_get  # type: ignore[method-assign]
 
-    docs = await ingestor.search_radar("python machine learning")
+    # Patch ContentExtractor to avoid real network calls in unit tests.
+    # SAMPLE_ALGOLIA_RESPONSE has a link story with an external URL.
+    with patch("ai_craftsman_kb.ingestors.hackernews.ContentExtractor") as mock_cls:
+        mock_extractor = AsyncMock()
+        mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_extractor)
+        mock_cls.return_value.__aexit__ = AsyncMock(return_value=None)
+        extracted = MagicMock()
+        extracted.text = "Article content."
+        extracted.word_count = 2
+        extracted.title = None
+        mock_extractor.fetch_and_extract = AsyncMock(return_value=extracted)
+
+        docs = await ingestor.search_radar("python machine learning")
 
     assert isinstance(docs, list)
     assert len(docs) == 1
@@ -391,7 +403,18 @@ async def test_search_radar_respects_limit() -> None:
 
     ingestor._client.get = mock_get  # type: ignore[method-assign]
 
-    docs = await ingestor.search_radar("rust", limit=1)
+    # SAMPLE_ALGOLIA_MULTI_RESPONSE has a link story — patch ContentExtractor.
+    with patch("ai_craftsman_kb.ingestors.hackernews.ContentExtractor") as mock_cls:
+        mock_extractor = AsyncMock()
+        mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_extractor)
+        mock_cls.return_value.__aexit__ = AsyncMock(return_value=None)
+        extracted = MagicMock()
+        extracted.text = "Content."
+        extracted.word_count = 1
+        extracted.title = None
+        mock_extractor.fetch_and_extract = AsyncMock(return_value=extracted)
+
+        docs = await ingestor.search_radar("rust", limit=1)
 
     assert len(docs) <= 1
 

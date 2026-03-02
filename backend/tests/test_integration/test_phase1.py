@@ -300,8 +300,9 @@ async def test_run_all_runs_hn(
 ) -> None:
     """run_all() runs all registered ingestors and returns one report per source.
 
-    With only 'hn' registered in INGESTORS, run_all() should return exactly
-    one IngestReport with source_type='hn' and stored=1.
+    INGESTORS now has 7 entries (hn, arxiv, devto, reddit, rss, substack, youtube).
+    run_all() returns one IngestReport per registered ingestor. The HN report should
+    have stored=1; other ingestors will produce reports with errors (missing config).
     """
     db_path = tmp_data_dir / "craftsman.db"
     await init_db(tmp_data_dir)
@@ -326,10 +327,11 @@ async def test_run_all_runs_hn(
         runner = IngestRunner(minimal_config, mock_llm_router, db_path)
         reports = await runner.run_all()
 
-    assert len(reports) == 1
-    assert reports[0].source_type == "hn"
-    assert reports[0].stored == 1
-    assert reports[0].errors == []
+    # One report per registered ingestor (7 total: hn, arxiv, devto, reddit, rss, substack, youtube)
+    assert len(reports) == 7
+    hn_report = next(r for r in reports if r.source_type == "hn")
+    assert hn_report.stored == 1
+    assert hn_report.errors == []
 
 
 @pytest.mark.asyncio

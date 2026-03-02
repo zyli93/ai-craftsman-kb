@@ -370,9 +370,12 @@ async def test_search_radar_only_includes_videos_with_transcripts() -> None:
     ):
         docs = await ingestor.search_radar("transformers", limit=10)
 
-    # Only the video with a transcript should be included
-    assert len(docs) == 1
-    assert docs[0].metadata["video_id"] == "abc123"
+    # Videos with transcripts are preferred; no-transcript videos are included
+    # as fallback (up to limit // 2 = 5 slots with limit=10).
+    # abc123 has a transcript; xyz789 does not but qualifies as a fallback.
+    assert len(docs) == 2
+    video_ids = [d.metadata["video_id"] for d in docs]
+    assert "abc123" in video_ids
 
 
 @pytest.mark.asyncio
@@ -413,7 +416,8 @@ async def test_search_radar_respects_limit() -> None:
 
     await ingestor.search_radar("python", limit=15)
 
-    assert captured_params[0].get("maxResults") == 15
+    # search_radar over-fetches (limit * 2) to fill slots after transcript filtering
+    assert captured_params[0].get("maxResults") == 30
 
 
 @pytest.mark.asyncio
