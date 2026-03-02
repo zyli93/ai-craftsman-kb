@@ -32,8 +32,16 @@ export interface Entity {
   first_seen_at: string | null
 }
 
+export interface CoOccurringEntity {
+  entity_id: string
+  name: string
+  entity_type: string
+  co_occurrence_count: number
+}
+
 export interface EntityWithDocuments extends Entity {
   documents: Document[]
+  co_occurring?: CoOccurringEntity[]
 }
 
 export interface SystemStats {
