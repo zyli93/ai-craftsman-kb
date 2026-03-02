@@ -54,7 +54,7 @@ Last updated: [auto-updated by agents]
 | Task | Description | Domain | Wave | Status | Branch | Dependencies |
 |------|-------------|--------|------|--------|--------|-------------|
 | task_16 | Adhoc URL ingestor | backend | 6 | 🔀 merged | task/16-adhoc-url | 05, 12 |
-| task_17 | Phase 2 integration + incremental fetch | integration | 6 | 🔲 todo | task/17-phase2-integration | 10-16 |
+| task_17 | Phase 2 integration + incremental fetch | integration | 6 | 🔵 in-progress | task/17-phase2-integration | 10-16 |
 
 ### Wave 7 — Search Foundation (3 parallel)
 
@@ -75,8 +75,8 @@ Last updated: [auto-updated by agents]
 
 | Task | Description | Domain | Wave | Status | Branch | Dependencies |
 |------|-------------|--------|------|--------|--------|-------------|
-| task_21 | Hybrid search (FTS + vector + RRF) | backend | 9 | 🔲 todo | task/21-hybrid-search | 03, 20 |
-| task_24 | Auto-embed + extract on ingest hook | backend | 9 | 🔲 todo | task/24-ingest-pipeline | 18, 19, 20, 22 |
+| task_21 | Hybrid search (FTS + vector + RRF) | backend | 9 | 🔵 in-progress | task/21-hybrid-search | 03, 20 |
+| task_24 | Auto-embed + extract on ingest hook | backend | 9 | 🔵 in-progress | task/24-ingest-pipeline | 18, 19, 20, 22 |
 | task_25 | Search CLI enhancements | backend | 9 | 🔲 todo | task/25-search-cli | 08, 21, 23 |
 
 ### Wave 10 — Radar Core (sequential)
