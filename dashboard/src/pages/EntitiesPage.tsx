@@ -189,7 +189,7 @@ interface DetailPanelProps {
 
 /**
  * Detail panel shown when an entity is selected.
- * Displays entity metadata, related entities (co-occurrences), and linked docs.
+ * Displays entity metadata, related entities, and linked docs.
  */
 function EntityDetailPanel({ entityId, onClose }: DetailPanelProps) {
   const { data, isLoading } = useQuery<EntityWithDocuments>({
@@ -307,9 +307,7 @@ function EntityDetailPanel({ entityId, onClose }: DetailPanelProps) {
             )}
 
             {data.documents.length === 0 && (
-              <p className="text-sm text-muted-foreground">
-                No linked documents found.
-              </p>
+              <p className="text-sm text-muted-foreground">No linked documents found.</p>
             )}
           </>
         ) : (
@@ -330,9 +328,7 @@ interface EntityRowProps {
   onSelect: (id: string) => void
 }
 
-/**
- * Single entity row within a type group section.
- */
+/** Single entity row within a type group section. */
 function EntityRow({ entity, isSelected, onSelect }: EntityRowProps) {
   return (
     <div
@@ -379,17 +375,13 @@ interface TypeSectionProps {
   onSelectEntity: (id: string) => void
 }
 
-/**
- * Section grouping entities under a single entity type header.
- */
+/** Section grouping entities under a single entity type header. */
 function TypeSection({ entityType, entities, selectedEntityId, onSelectEntity }: TypeSectionProps) {
   return (
     <div className="space-y-1">
       {/* Section header */}
       <div className="flex items-center gap-2 px-1 py-1">
-        <span className="text-muted-foreground">
-          {TYPE_ICONS[entityType] ?? null}
-        </span>
+        <span className="text-muted-foreground">{TYPE_ICONS[entityType] ?? null}</span>
         <h3 className="text-sm font-semibold">
           {typeLabel(entityType)}{' '}
           <span className="font-normal text-muted-foreground">({entities.length})</span>
@@ -414,7 +406,7 @@ function TypeSection({ entityType, entities, selectedEntityId, onSelectEntity }:
 // ---------------------------------------------------------------------------
 
 /**
- * Returns a debounced version of `value` that only updates after `delay` ms.
+ * Returns a debounced version of value that only updates after delay ms.
  * Used to throttle search API calls as the user types.
  */
 function useDebounced<T>(value: T, delay: number): T {
@@ -441,11 +433,9 @@ type SortMode = 'mention_count' | 'name'
 /**
  * Entity Explorer page.
  *
- * - Lists all extracted entities grouped by type
- * - Search input filters by name (debounced 300 ms)
- * - Type filter limits display to one entity type
- * - Sort by mention count (default) or alphabetically
- * - Clicking an entity opens an inline detail panel with co-occurrences and docs
+ * Lists all extracted entities grouped by type. Supports debounced search
+ * (300ms), type filter, sort by mention count or name, and an inline detail
+ * panel showing co-occurrences and linked documents for a selected entity.
  */
 export function EntitiesPage() {
   const [searchInput, setSearchInput] = useState('')
@@ -470,7 +460,6 @@ export function EntitiesPage() {
   const groupedEntities = useMemo(() => {
     if (!entities) return new Map<string, Entity[]>()
 
-    // Sort within each type
     const sorted = [...entities].sort((a, b) => {
       if (sortBy === 'mention_count') return b.mention_count - a.mention_count
       return a.name.localeCompare(b.name)
@@ -557,7 +546,7 @@ export function EntitiesPage() {
         )}
       </div>
 
-      {/* Main content — two-column layout when an entity is selected */}
+      {/* Main content - two-column layout when an entity is selected */}
       <div
         className={`grid gap-6 ${
           selectedEntityId ? 'lg:grid-cols-[1fr_380px]' : 'grid-cols-1'
@@ -600,7 +589,7 @@ export function EntitiesPage() {
           )}
         </div>
 
-        {/* Detail panel column — only visible when an entity is selected */}
+        {/* Detail panel column - only visible when an entity is selected */}
         {selectedEntityId && (
           <EntityDetailPanel
             entityId={selectedEntityId}
