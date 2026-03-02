@@ -3,8 +3,8 @@
 Last updated: [auto-updated by agents]
 
 ## Progress
-- Total: 22/45 done
-- Backend: 21/33 done; tasks 16,20,23,27,28,29 in-progress
+- Total: 28/45 done
+- Backend: 27/33 done; tasks 16,20,23,27,28,29 merged
 - Frontend: 1/12 done (task_32 merged)
 
 ## Wave Execution Order
@@ -53,7 +53,7 @@ Last updated: [auto-updated by agents]
 
 | Task | Description | Domain | Wave | Status | Branch | Dependencies |
 |------|-------------|--------|------|--------|--------|-------------|
-| task_16 | Adhoc URL ingestor | backend | 6 | 🔵 in-progress | task/16-adhoc-url | 05, 12 |
+| task_16 | Adhoc URL ingestor | backend | 6 | 🔀 merged | task/16-adhoc-url | 05, 12 |
 | task_17 | Phase 2 integration + incremental fetch | integration | 6 | 🔲 todo | task/17-phase2-integration | 10-16 |
 
 ### Wave 7 — Search Foundation (3 parallel)
@@ -68,8 +68,8 @@ Last updated: [auto-updated by agents]
 
 | Task | Description | Domain | Wave | Status | Branch | Dependencies |
 |------|-------------|--------|------|--------|--------|-------------|
-| task_20 | Qdrant local setup + vector store | backend | 8 | 🔵 in-progress | task/20-qdrant | 18 |
-| task_23 | Entity dedup + FTS search | backend | 8 | 🔵 in-progress | task/23-entity-search | 03, 22 |
+| task_20 | Qdrant local setup + vector store | backend | 8 | 🔀 merged | task/20-qdrant | 18 |
+| task_23 | Entity dedup + FTS search | backend | 8 | 🔀 merged | task/23-entity-search | 03, 22 |
 
 ### Wave 9 — Search Assembly (sequential)
 
@@ -89,14 +89,14 @@ Last updated: [auto-updated by agents]
 
 | Task | Description | Domain | Wave | Status | Branch | Dependencies |
 |------|-------------|--------|------|--------|--------|-------------|
-| task_27 | YouTube radar search + transcript pull | backend | 11 | 🔵 in-progress | task/27-youtube-radar | 12, 26 |
-| task_28 | Reddit + HN + ArXiv + DEV.to radar | backend | 11 | 🔵 in-progress | task/28-multi-radar | 13, 14, 15, 26 |
+| task_27 | YouTube radar search + transcript pull | backend | 11 | 🔀 merged | task/27-youtube-radar | 12, 26 |
+| task_28 | Reddit + HN + ArXiv + DEV.to radar | backend | 11 | 🔀 merged | task/28-multi-radar | 13, 14, 15, 26 |
 
 ### Wave 12 — Radar CLI (sequential)
 
 | Task | Description | Domain | Wave | Status | Branch | Dependencies |
 |------|-------------|--------|------|--------|--------|-------------|
-| task_29 | Radar CLI + promote/archive/delete | backend | 12 | 🔵 in-progress | task/29-radar-cli | 08, 26 |
+| task_29 | Radar CLI + promote/archive/delete | backend | 12 | 🔀 merged | task/29-radar-cli | 08, 26 |
 
 ### Wave 13 — API + Dashboard Scaffold (2 parallel)
 
