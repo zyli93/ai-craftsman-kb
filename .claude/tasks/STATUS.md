@@ -111,7 +111,7 @@ Last updated: [auto-updated by agents]
 |------|-------------|--------|------|--------|--------|-------------|
 | task_33 | Overview page (stats, health, recent docs) | frontend | 14 | 🔀 merged | task/33-overview-page | 30, 32 |
 | task_34 | Source editor page (CRUD + status) | frontend | 14 | 🔀 merged | task/34-source-editor | 30, 32 |
-| task_35 | Search + Radar page | frontend | 14 | ✅ done | task/35-search-page | 30, 32 |
+| task_35 | Search + Radar page | frontend | 14 | 🔀 merged | task/35-search-page | 30, 32 |
 | task_36 | Entity explorer page | frontend | 14 | 🔲 todo | task/36-entity-page | 30, 32 |
 | task_37 | Document manager page | frontend | 14 | 🔲 todo | task/37-document-page | 30, 32 |
 | task_38 | Adhoc URL ingest + source discovery UI | frontend | 14 | 🔲 todo | task/38-adhoc-discovery | 30, 32 |
