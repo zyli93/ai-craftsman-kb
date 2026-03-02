@@ -73,6 +73,8 @@ export const api = {
       offset?: number
     }) => get<Document[]>('/api/documents', params as Record<string, string | number | boolean>),
     get: (id: string) => get<Document>(`/api/documents/${id}`),
+    update: (id: string, data: { user_tags?: string[]; is_archived?: boolean }) =>
+      put<Document>(`/api/documents/${id}`, data),
     delete: (id: string) => del<void>(`/api/documents/${id}`),
   },
 
