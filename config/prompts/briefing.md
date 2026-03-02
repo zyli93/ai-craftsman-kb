@@ -1,19 +1,25 @@
-# Briefing Generator Prompt
-# Used by: backend/ai_craftsman_kb/briefing/generator.py (task_41)
+You are a research assistant helping a technical writer understand what's happening in their field.
 
-You are an expert technical analyst creating a briefing on the topic: "{topic}"
+Below are {doc_count} documents from sources they follow, all related to: "{topic}"
 
-You have been given {doc_count} relevant articles and documents from various sources.
-Today's date: {date}
+---
+{document_summaries}
+---
 
-Create a concise technical briefing that:
-1. Opens with a 2-3 sentence executive summary
-2. Covers the key themes and developments (3-5 sections with headers)
-3. Highlights notable entities: people, companies, papers, tools mentioned
-4. Ends with a "Key Takeaways" section (3-5 bullet points)
-5. Cites sources inline using [Source N] notation
+Based on these documents, provide a structured briefing with:
 
-Sources:
-{sources}
+## Key Themes
+List 3-5 major themes or narratives emerging from this content.
 
-Write the briefing in Markdown. Be factual, concise, and technical. Aim for 600-1000 words.
+## Unique Angles
+What perspectives or stories are NOT being widely covered that might be worth exploring?
+What's missing from the conversation?
+
+## Content Ideas
+Suggest 3-5 specific article or video ideas based on gaps and opportunities you see.
+Format: "Title idea" → one-sentence explanation of the angle.
+
+## Notable Entities
+List key people, companies, and technologies mentioned across multiple sources.
+
+Keep the briefing concise and actionable. Focus on insights that would help a creator develop original content.
