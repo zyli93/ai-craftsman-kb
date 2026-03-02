@@ -13,10 +13,15 @@ stored on ``app.state``.
 Run locally with::
 
     uv run uvicorn ai_craftsman_kb.server:app --reload --port 8000
+
+Or via the CLI::
+
+    cr server --reload
 """
 from __future__ import annotations
 
 import logging
+import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import AsyncGenerator
@@ -40,6 +45,9 @@ from .processing.embedder import Embedder
 from .search.vector_store import VectorStore
 
 logger = logging.getLogger(__name__)
+
+# Path to the built dashboard static files (produced by `pnpm build`)
+DASHBOARD_DIST = Path(__file__).parent.parent.parent / "dashboard" / "dist"
 
 
 def _get_db_path(config) -> Path:
@@ -96,8 +104,47 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     logger.info("AI Craftsman KB API shutting down.")
 
 
-def create_app() -> FastAPI:
+def mount_dashboard(app: FastAPI) -> None:
+    """Mount built dashboard static files at the root path.
+
+    If ``dashboard/dist/`` exists (i.e., the React app has been built), serve
+    it via FastAPI's StaticFiles handler with HTML mode enabled so that the
+    SPA's client-side router works correctly for deep links.
+
+    Falls back gracefully — if the dist directory is missing a lightweight JSON
+    endpoint at ``/`` tells the user how to build the dashboard.
+
+    Args:
+        app: The FastAPI application instance to mount the static files on.
+    """
+    if DASHBOARD_DIST.exists():
+        from fastapi.staticfiles import StaticFiles
+
+        app.mount(
+            "/",
+            StaticFiles(directory=DASHBOARD_DIST, html=True),
+            name="dashboard",
+        )
+        logger.info("Dashboard static files mounted from %s", DASHBOARD_DIST)
+    else:
+
+        @app.get("/")
+        async def dashboard_not_built() -> dict[str, str]:  # type: ignore[return]
+            """Placeholder route shown when the dashboard has not been built yet."""
+            return {"message": "Dashboard not built. Run: cd dashboard && pnpm build"}
+
+        logger.info(
+            "Dashboard dist not found at %s — serving placeholder at /", DASHBOARD_DIST
+        )
+
+
+def create_app(serve_dashboard: bool = True) -> FastAPI:
     """Create and configure the FastAPI application.
+
+    Args:
+        serve_dashboard: When True (default), mount built dashboard static
+            files at ``/`` if ``dashboard/dist/`` exists.  Pass False when
+            running in ``--no-dashboard`` mode or during testing.
 
     Returns:
         A configured FastAPI instance with CORS middleware and all routers
@@ -124,7 +171,7 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
-    # Register all routers
+    # Register all API routers first so they take priority over static files
     app.include_router(stats_router)
     app.include_router(system_router)
     app.include_router(documents_router)
@@ -135,8 +182,14 @@ def create_app() -> FastAPI:
     app.include_router(radar_router)
     app.include_router(briefings_router)
 
+    # Mount dashboard static files last — StaticFiles acts as a catch-all
+    if serve_dashboard:
+        mount_dashboard(app)
+
     return app
 
 
-# Module-level singleton used by uvicorn
-app = create_app()
+# Module-level singleton used by uvicorn when launched via `cr server` or directly.
+# Respects the CRAFTSMAN_NO_DASHBOARD env var set by `cr server --no-dashboard`.
+_serve_dashboard = os.environ.get("CRAFTSMAN_NO_DASHBOARD") != "1"
+app = create_app(serve_dashboard=_serve_dashboard)

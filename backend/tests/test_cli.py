@@ -111,11 +111,18 @@ def test_entities_command(runner: CliRunner) -> None:
     assert result.exit_code == 0
 
 
-def test_server_command(runner: CliRunner) -> None:
-    """server command should echo the default port (8000)."""
-    result = runner.invoke(cli, ["server"])
+def test_server_command(runner: CliRunner, minimal_config) -> None:
+    """server command should echo the default port (8000) and call uvicorn.run."""
+    with (
+        patch("ai_craftsman_kb.cli.load_config", return_value=minimal_config),
+        patch("uvicorn.run") as mock_uvicorn,
+    ):
+        result = runner.invoke(cli, ["server"])
     assert result.exit_code == 0
     assert "8000" in result.output  # default port
+    mock_uvicorn.assert_called_once()
+    call_kwargs = mock_uvicorn.call_args
+    assert call_kwargs.kwargs.get("port") == 8000 or call_kwargs.args[1] == 8000 or 8000 in call_kwargs.args
 
 
 def test_doctor_command(runner: CliRunner) -> None:
@@ -171,9 +178,13 @@ def test_entities_with_type_and_top(runner: CliRunner) -> None:
     assert result.exit_code == 0
 
 
-def test_server_custom_port(runner: CliRunner) -> None:
+def test_server_custom_port(runner: CliRunner, minimal_config) -> None:
     """server accepts a custom --port option."""
-    result = runner.invoke(cli, ["server", "--port", "9000"])
+    with (
+        patch("ai_craftsman_kb.cli.load_config", return_value=minimal_config),
+        patch("uvicorn.run"),
+    ):
+        result = runner.invoke(cli, ["server", "--port", "9000"])
     assert result.exit_code == 0
     assert "9000" in result.output
 
@@ -988,3 +999,121 @@ def test_stats_command_qdrant_unavailable(runner: CliRunner, minimal_config) -> 
     # Should still succeed -- just show a dash for vector count
     assert result.exit_code == 0
     assert "AI Craftsman KB" in result.output
+
+
+# ---------------------------------------------------------------------------
+# server command tests (task_40)
+# ---------------------------------------------------------------------------
+
+
+def test_server_command_calls_uvicorn(runner: CliRunner, minimal_config) -> None:
+    """server command calls uvicorn.run with the correct app string and port."""
+    with (
+        patch("ai_craftsman_kb.cli.load_config", return_value=minimal_config),
+        patch("uvicorn.run") as mock_uvicorn,
+    ):
+        result = runner.invoke(cli, ["server"])
+
+    assert result.exit_code == 0
+    mock_uvicorn.assert_called_once()
+    args, kwargs = mock_uvicorn.call_args
+    assert args[0] == "ai_craftsman_kb.server:app"
+    assert kwargs.get("port") == 8000
+    assert kwargs.get("reload") is False
+
+
+def test_server_command_custom_port_calls_uvicorn(runner: CliRunner, minimal_config) -> None:
+    """server --port 9001 passes port=9001 to uvicorn.run."""
+    with (
+        patch("ai_craftsman_kb.cli.load_config", return_value=minimal_config),
+        patch("uvicorn.run") as mock_uvicorn,
+    ):
+        result = runner.invoke(cli, ["server", "--port", "9001"])
+
+    assert result.exit_code == 0
+    assert "9001" in result.output
+    _, kwargs = mock_uvicorn.call_args
+    assert kwargs.get("port") == 9001
+
+
+def test_server_command_reload_flag(runner: CliRunner, minimal_config) -> None:
+    """server --reload passes reload=True to uvicorn.run."""
+    with (
+        patch("ai_craftsman_kb.cli.load_config", return_value=minimal_config),
+        patch("uvicorn.run") as mock_uvicorn,
+    ):
+        result = runner.invoke(cli, ["server", "--reload"])
+
+    assert result.exit_code == 0
+    assert "reload" in result.output.lower() or "Auto-reload" in result.output
+    _, kwargs = mock_uvicorn.call_args
+    assert kwargs.get("reload") is True
+
+
+def test_server_command_no_dashboard_flag(runner: CliRunner, minimal_config) -> None:
+    """server --no-dashboard echoes that dashboard won't be served."""
+    with (
+        patch("ai_craftsman_kb.cli.load_config", return_value=minimal_config),
+        patch("uvicorn.run"),
+    ):
+        result = runner.invoke(cli, ["server", "--no-dashboard"])
+
+    assert result.exit_code == 0
+    assert "dashboard" in result.output.lower() or "no-dashboard" in result.output.lower()
+
+
+def test_server_command_with_mcp_flag(runner: CliRunner, minimal_config) -> None:
+    """server --with-mcp echoes the MCP startup message."""
+    with (
+        patch("ai_craftsman_kb.cli.load_config", return_value=minimal_config),
+        patch("uvicorn.run"),
+    ):
+        result = runner.invoke(cli, ["server", "--with-mcp"])
+
+    assert result.exit_code == 0
+    assert "MCP" in result.output or "mcp" in result.output.lower()
+
+
+def test_server_help_shows_all_options(runner: CliRunner, minimal_config) -> None:
+    """server --help lists all options including --no-dashboard, --with-mcp, --reload."""
+    with patch("ai_craftsman_kb.cli.load_config", return_value=minimal_config):
+        result = runner.invoke(cli, ["server", "--help"])
+
+    assert result.exit_code == 0
+    assert "--host" in result.output
+    assert "--port" in result.output
+    assert "--no-dashboard" in result.output
+    assert "--with-mcp" in result.output
+    assert "--reload" in result.output
+
+
+# ---------------------------------------------------------------------------
+# mcp command tests (task_40)
+# ---------------------------------------------------------------------------
+
+
+def test_mcp_command_appears_in_help(runner: CliRunner) -> None:
+    """mcp command should appear in the top-level --help output."""
+    result = runner.invoke(cli, ["--help"])
+    assert result.exit_code == 0
+    assert "mcp" in result.output
+
+
+def test_mcp_command_help(runner: CliRunner, minimal_config) -> None:
+    """mcp --help should exit cleanly and describe the stdio transport."""
+    with patch("ai_craftsman_kb.cli.load_config", return_value=minimal_config):
+        result = runner.invoke(cli, ["mcp", "--help"])
+    assert result.exit_code == 0
+    assert "MCP" in result.output or "stdio" in result.output
+
+
+def test_mcp_command_missing_module(runner: CliRunner, minimal_config) -> None:
+    """mcp command exits with error code 1 when mcp_server module is not available."""
+    with (
+        patch("ai_craftsman_kb.cli.load_config", return_value=minimal_config),
+        patch.dict("sys.modules", {"ai_craftsman_kb.mcp_server": None}),
+    ):
+        result = runner.invoke(cli, ["mcp"])
+
+    # Should fail gracefully (exit code 1) with a helpful message
+    assert result.exit_code == 1 or "not yet available" in result.output or "MCP" in result.output

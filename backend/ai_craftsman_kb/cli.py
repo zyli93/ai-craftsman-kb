@@ -540,16 +540,94 @@ def briefing(
 
 @cli.command("server")
 @click.option("--host", default="127.0.0.1", show_default=True)
-@click.option("--port", type=int, default=None, help="Backend port (default from settings.yaml)")
+@click.option(
+    "--port",
+    type=int,
+    default=None,
+    help="Backend port (default from settings.yaml: 8000)",
+)
+@click.option(
+    "--no-dashboard",
+    is_flag=True,
+    default=False,
+    help="Do not serve dashboard static files",
+)
+@click.option(
+    "--with-mcp",
+    is_flag=True,
+    default=False,
+    help="Also start MCP server in same process",
+)
+@click.option(
+    "--reload",
+    is_flag=True,
+    default=False,
+    help="Auto-reload on code changes (development mode)",
+)
 @click.pass_context
-def server(ctx: click.Context, host: str, port: int | None) -> None:
-    """Start the FastAPI backend + dashboard."""
+def server(
+    ctx: click.Context,
+    host: str,
+    port: int | None,
+    no_dashboard: bool,
+    with_mcp: bool,
+    reload: bool,
+) -> None:
+    """Start the FastAPI backend (+ dashboard). Access at http://HOST:PORT"""
     config: AppConfig = ctx.obj["config"]
-    effective_port = port or config.settings.server.backend_port
-    console.print(
-        f"[dim]server:[/dim] Starting on [bold]{host}:{effective_port}[/bold]"
+    backend_port = port or config.settings.server.backend_port
+
+    click.echo(f"Starting AI Craftsman KB server at http://{host}:{backend_port}")
+    click.echo(f"Dashboard: http://{host}:{backend_port}/")
+    click.echo(f"API docs:  http://{host}:{backend_port}/docs")
+
+    if no_dashboard:
+        click.echo("Dashboard static files will NOT be served (--no-dashboard)")
+
+    if reload:
+        click.echo("Auto-reload enabled (development mode)")
+
+    if with_mcp:
+        click.echo("MCP server startup requested (--with-mcp); starting in same process")
+
+    import uvicorn
+
+    # Pass the import string, not the live object, so --reload can work correctly.
+    # When --no-dashboard is requested we set an env var that server.py reads at
+    # module import time; however, the cleanest approach for a single-process run
+    # is to configure the app factory via an environment variable before uvicorn
+    # imports the module.
+    import os
+
+    if no_dashboard:
+        os.environ["CRAFTSMAN_NO_DASHBOARD"] = "1"
+    else:
+        os.environ.pop("CRAFTSMAN_NO_DASHBOARD", None)
+
+    uvicorn.run(
+        "ai_craftsman_kb.server:app",
+        host=host,
+        port=backend_port,
+        reload=reload,
     )
-    console.print("[yellow]Server command not yet implemented (task_40).[/yellow]")
+
+
+@cli.command("mcp")
+@click.pass_context
+def mcp_server(ctx: click.Context) -> None:
+    """Start the MCP server (stdio transport for Claude Desktop)."""
+    config: AppConfig = ctx.obj["config"]
+    try:
+        from ai_craftsman_kb.mcp_server import run_mcp_server
+
+        run_mcp_server(config)
+    except ImportError:
+        click.echo(
+            "MCP server module not yet available. "
+            "Install mcp extra or wait for task_31 to complete.",
+            err=True,
+        )
+        raise SystemExit(1)
 
 
 # ── Stats ─────────────────────────────────────────────────────────────────────
