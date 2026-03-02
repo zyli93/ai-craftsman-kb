@@ -1,6 +1,7 @@
 /**
  * DiscoveredSources component — panel showing automatically discovered source suggestions.
  * Users can add a discovery to Pro sources or dismiss it.
+ * Shows confidence badges and discovery method labels.
  */
 import { useQueryClient, useMutation } from '@tanstack/react-query'
 import { Lightbulb } from 'lucide-react'
@@ -21,8 +22,26 @@ const SOURCE_TYPE_LABELS: Record<string, string> = {
   devto: 'DEV.to',
 }
 
+/** Maps discovery_method to a human-readable description */
+const DISCOVERY_METHOD_LABELS: Record<string, string> = {
+  outbound_link: 'Found in outbound links',
+  citation: 'Cited in paper',
+  mention: 'Mentioned in articles',
+  llm_suggestion: 'AI suggestion',
+}
+
+/**
+ * Returns Tailwind color classes for a confidence badge.
+ * >0.8 green, 0.5-0.8 yellow, <0.5 gray.
+ */
+function confidenceBadgeClass(confidence: number): string {
+  if (confidence > 0.8) return 'bg-green-100 text-green-800 border-green-200'
+  if (confidence >= 0.5) return 'bg-yellow-100 text-yellow-800 border-yellow-200'
+  return 'bg-gray-100 text-gray-700 border-gray-200'
+}
+
 interface DiscoveredSourcesProps {
-  /** List of discovered source suggestions with status 'pending' */
+  /** List of discovered source suggestions */
   discoveries: DiscoveredSource[]
 }
 
@@ -52,7 +71,24 @@ export function DiscoveredSources({ discoveries }: DiscoveredSourcesProps) {
     },
   })
 
-  const pendingDiscoveries = discoveries.filter((d) => d.status === 'pending')
+  /** Filter to only show pending/suggested items that haven't been acted on */
+  const pendingDiscoveries = discoveries.filter(
+    (d) => d.status === 'pending' || d.status === 'suggested',
+  )
+
+  if (discoveries.length === 0) {
+    return (
+      <Card className="mt-6">
+        <CardContent className="py-8 text-center">
+          <p className="text-sm text-muted-foreground">
+            No source suggestions yet. Run{' '}
+            <code className="text-xs font-mono bg-muted px-1 py-0.5 rounded">cr ingest</code>{' '}
+            to discover new sources.
+          </p>
+        </CardContent>
+      </Card>
+    )
+  }
 
   if (pendingDiscoveries.length === 0) {
     return null
@@ -66,7 +102,7 @@ export function DiscoveredSources({ discoveries }: DiscoveredSourcesProps) {
             <Lightbulb className="h-4 w-4 text-yellow-500" />
             Discovered Sources
             <Badge variant="secondary" className="ml-1">
-              {pendingDiscoveries.length} suggestions
+              {pendingDiscoveries.length} suggestion{pendingDiscoveries.length !== 1 ? 's' : ''}
             </Badge>
           </CardTitle>
           <Button variant="ghost" size="sm" className="text-xs text-muted-foreground">
@@ -88,14 +124,35 @@ export function DiscoveredSources({ discoveries }: DiscoveredSourcesProps) {
                 <Badge variant="outline" className="text-xs shrink-0">
                   {SOURCE_TYPE_LABELS[discovery.source_type] ?? discovery.source_type}
                 </Badge>
-                {discovery.mention_count > 0 && (
+
+                {/* Confidence badge shown when confidence field is present */}
+                {discovery.confidence !== undefined && (
+                  <Badge
+                    variant="outline"
+                    className={`text-xs shrink-0 ${confidenceBadgeClass(discovery.confidence)}`}
+                  >
+                    {Math.round(discovery.confidence * 100)}% confidence
+                  </Badge>
+                )}
+
+                {/* Fallback: mention count for legacy entries without confidence */}
+                {discovery.confidence === undefined && discovery.mention_count > 0 && (
                   <span className="text-xs text-muted-foreground shrink-0">
                     found in {discovery.mention_count}{' '}
                     {discovery.mention_count === 1 ? 'article' : 'articles'}
                   </span>
                 )}
               </div>
-              {discovery.context && (
+
+              {/* Discovery method label */}
+              {discovery.discovery_method && (
+                <p className="text-xs text-muted-foreground mt-1">
+                  {DISCOVERY_METHOD_LABELS[discovery.discovery_method] ?? discovery.discovery_method}
+                </p>
+              )}
+
+              {/* Context snippet for legacy entries without discovery_method */}
+              {!discovery.discovery_method && discovery.context && (
                 <p className="text-xs text-muted-foreground mt-1 truncate">
                   {discovery.context}
                 </p>

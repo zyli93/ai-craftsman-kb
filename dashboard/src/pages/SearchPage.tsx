@@ -6,11 +6,12 @@
  */
 import { useState, useCallback } from 'react'
 import { useMutation } from '@tanstack/react-query'
-import { Loader2, Link as LinkIcon } from 'lucide-react'
+import { Loader2 } from 'lucide-react'
 import { api } from '@/api/client'
 import { useSearch } from '@/hooks/useSearch'
 import { SearchBar, type SearchMode } from '@/components/SearchBar'
 import { DocumentCard } from '@/components/DocumentCard'
+import { AdhocIngest } from '@/components/AdhocIngest'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
@@ -64,32 +65,6 @@ const RADAR_SOURCES = [
 ]
 
 // ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-/**
- * Attempts to detect the document type from a URL string.
- * Returns a human-readable label for the detected type.
- */
-function detectUrlType(url: string): string {
-  if (!url) return ''
-  try {
-    const { hostname, pathname } = new URL(url)
-    if (hostname.includes('youtube.com') || hostname.includes('youtu.be')) {
-      return 'YouTube Video'
-    }
-    if (hostname.includes('arxiv.org')) return 'ArXiv Paper'
-    if (hostname.includes('reddit.com')) return 'Reddit Post'
-    if (hostname.includes('news.ycombinator.com')) return 'HN Thread'
-    if (hostname.includes('dev.to')) return 'DEV.to Article'
-    if (pathname.endsWith('.pdf')) return 'PDF Document'
-  } catch {
-    // Not a valid URL yet — return empty string
-  }
-  return 'Web Page'
-}
-
-// ---------------------------------------------------------------------------
 // Loading skeleton for search results
 // ---------------------------------------------------------------------------
 
@@ -104,87 +79,6 @@ function ResultsSkeleton() {
           <Skeleton className="h-3 w-4/5" />
         </div>
       ))}
-    </div>
-  )
-}
-
-// ---------------------------------------------------------------------------
-// Adhoc URL tab
-// ---------------------------------------------------------------------------
-
-function AdhocTab() {
-  const [url, setUrl] = useState('')
-  const [ingestedDoc, setIngestedDoc] = useState<Document | null>(null)
-
-  const detectedType = detectUrlType(url)
-
-  const ingestMutation = useMutation({
-    mutationFn: () => api.ingest.url({ url }),
-    onSuccess: (doc) => {
-      setIngestedDoc(doc)
-    },
-  })
-
-  function handleIngest() {
-    if (!url.trim()) return
-    setIngestedDoc(null)
-    ingestMutation.mutate()
-  }
-
-  return (
-    <div className="space-y-4 pt-2">
-      <p className="text-sm text-muted-foreground">
-        Paste a URL to ingest and index it immediately into your knowledge base.
-      </p>
-
-      <div className="flex gap-2">
-        <div className="relative flex-1">
-          <LinkIcon className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            type="url"
-            placeholder="https://..."
-            value={url}
-            onChange={(e) => setUrl(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') handleIngest()
-            }}
-            className="pl-9"
-          />
-        </div>
-        <Button
-          onClick={handleIngest}
-          disabled={!url.trim() || ingestMutation.isPending}
-        >
-          {ingestMutation.isPending ? (
-            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-          ) : null}
-          Ingest &amp; Index
-        </Button>
-      </div>
-
-      {detectedType && url && (
-        <p className="text-xs text-muted-foreground">
-          Detected: <span className="font-medium">{detectedType}</span>
-        </p>
-      )}
-
-      {ingestMutation.isError && (
-        <p className="text-sm text-destructive">
-          Failed to ingest URL. Please check the URL and try again.
-        </p>
-      )}
-
-      {ingestedDoc && (
-        <div className="space-y-2">
-          <p className="text-sm font-medium text-green-700">
-            Document ingested successfully.
-          </p>
-          <DocumentCard
-            document={ingestedDoc}
-            showOriginBadge
-          />
-        </div>
-      )}
     </div>
   )
 }
@@ -482,9 +376,9 @@ export function SearchPage() {
           <RadarTab />
         </TabsContent>
 
-        {/* Adhoc URL tab */}
+        {/* Adhoc URL tab — uses the AdhocIngest standalone component */}
         <TabsContent value="adhoc" className="mt-4">
-          <AdhocTab />
+          <AdhocIngest />
         </TabsContent>
       </Tabs>
     </div>

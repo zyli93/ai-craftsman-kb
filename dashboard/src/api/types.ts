@@ -116,8 +116,13 @@ export interface DiscoveredSource {
   source_type: string
   identifier: string
   display_name: string | null
+  /** How many times this source was mentioned (legacy field) */
   mention_count: number
-  status: 'pending' | 'added' | 'dismissed'
+  /** AI confidence score 0.0–1.0 (may not be present for legacy entries) */
+  confidence?: number
+  /** How this source was discovered */
+  discovery_method?: 'outbound_link' | 'citation' | 'mention' | 'llm_suggestion'
+  status: 'pending' | 'suggested' | 'added' | 'dismissed'
   discovered_at: string
   context: string | null
 }
