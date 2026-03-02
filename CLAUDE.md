@@ -41,14 +41,34 @@ git checkout -b task/XX-short-description
 ### While working:
 Make atomic commits on your feature branch.
 
-### After completing work — agents self-merge:
-Agents must rebase, test, merge, push, and clean up their own branch.
-Do NOT leave branches open waiting for another session to merge.
+### After completing work — subagent pushes branch, main agent merges one-by-one:
 
+Two roles, cleanly separated. Subagents never touch main.
+
+**Subagent** (after implementing):
 ```bash
-cd /Users/zeyuli/projects/ai-craftsman-kb
+# 1. Run tests
+uv run pytest backend/tests/ -v        # backend
+# cd dashboard && pnpm build           # frontend
 
-# 1. Rebase onto latest main
+# 2. Push branch to remote
+git push origin task/XX-short-description
+
+# 3. Mark ✅ done in STATUS.md, commit + push on branch
+git add .claude/tasks/STATUS.md
+git commit -m "status: mark task_XX as done"
+git push origin task/XX-short-description
+
+# 4. Delete local worktree branch
+git checkout main
+git branch -d worktree-<agent-id>
+```
+
+**Main agent** merges each branch individually — NEVER batch multiple tasks into one merge:
+```bash
+# Repeat this block once per task, sequentially:
+
+# 1. Fetch and rebase onto latest main
 git fetch origin
 git checkout main && git pull origin main
 git checkout task/XX-short-description
@@ -59,32 +79,40 @@ If rebase conflicts:
 1. Read both sides to understand what changed
 2. Keep the more complete/correct version, preserving changes from both sides
 3. `git add <resolved-file>` then `git rebase --continue`
-4. If too complex to resolve confidently: `git rebase --abort`, mark task ❌ blocked in STATUS.md, report — do NOT force through
+4. If too complex: `git rebase --abort`, mark task ❌ blocked in STATUS.md, report
 
 ```bash
-# 2. Run full tests after rebase
-uv run pytest backend/tests/ -v        # backend
-# cd dashboard && pnpm build           # frontend
-
-# 3. Fast-forward merge + push
+# 2. Fast-forward merge — preserves individual commits from the branch
 git checkout main
 git merge task/XX-short-description --ff-only
 git push origin main
 
-# 4. Clean up branch
+# 3. Delete remote and local branch
+git push origin --delete task/XX-short-description
 git branch -d task/XX-short-description
 
-# 5. Mark merged in STATUS.md, commit + push
+# 4. Mark 🔀 merged in STATUS.md, commit + push
 git add .claude/tasks/STATUS.md
 git commit -m "status: mark task_XX as merged"
 git push origin main
+
+# Then move on to the next ✅ done branch
+```
+
+### Branch cleanup — stale branches:
+Any branch with 0 commits ahead of main is stale — delete immediately:
+```bash
+git branch --merged main | grep -v "^\* main" | xargs git branch -d
 ```
 
 ### NEVER:
 - Force push to main
+- Subagents touch or push to main directly
+- Batch-merge multiple task branches in one operation
+- Squash commits — ff-only preserves the full per-task commit history
 - Merge without rebasing and testing first
 - Leave unresolved conflicts
-- Leave a branch open after a successful merge
+- Leave any branch (local or remote) open after work is complete
 
 ## Current Status
 Check .claude/tasks/STATUS.md for task status tracker.
