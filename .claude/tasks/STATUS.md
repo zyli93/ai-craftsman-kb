@@ -121,7 +121,7 @@ Last updated: [auto-updated by agents]
 
 | Task | Description | Domain | Wave | Status | Branch | Dependencies |
 |------|-------------|--------|------|--------|--------|-------------|
-| task_31 | MCP server (Python SDK) | backend | 15 | 🔵 in-progress | task/31-mcp-server | 30 |
+| task_31 | MCP server (Python SDK) | backend | 15 | 🔀 merged | task/31-mcp-server | 30 |
 | task_40 | `cr server` command (FastAPI + dashboard) | backend | 15 | 🔀 merged | task/40-server-cmd | 30, 32 |
 | task_41 | Briefing generator engine | backend | 15 | 🔀 merged | task/41-briefing-engine | 21, 26 |
 
