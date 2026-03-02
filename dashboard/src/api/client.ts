@@ -17,6 +17,7 @@ import type {
   IngestUrlRequest,
   IngestProRequest,
   RadarSearchRequest,
+  DiscoveredSource,
 } from './types'
 
 async function get<T>(
@@ -116,5 +117,8 @@ export const api = {
     delete: (id: string) => del<void>(`/api/briefings/${id}`),
   },
 
-  discover: () => get<unknown>('/api/discover'),
+  discover: {
+    list: () => get<DiscoveredSource[]>('/api/discover'),
+    dismiss: (id: string) => put<DiscoveredSource>(`/api/discover/${id}`, { status: 'dismissed' }),
+  },
 }

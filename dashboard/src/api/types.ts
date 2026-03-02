@@ -100,3 +100,14 @@ export interface RadarSearchRequest {
   sources?: string[]
   limit_per_source?: number
 }
+
+export interface DiscoveredSource {
+  id: string
+  source_type: string
+  identifier: string
+  display_name: string | null
+  mention_count: number
+  status: 'pending' | 'added' | 'dismissed'
+  discovered_at: string
+  context: string | null
+}

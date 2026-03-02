@@ -14,3 +14,16 @@ export type { InputProps } from './input'
 export { Badge, badgeVariants } from './badge'
 export type { BadgeProps } from './badge'
 export { Separator } from './separator'
+export { Tabs, TabsList, TabsTrigger, TabsContent } from './tabs'
+export { Checkbox } from './checkbox'
+export {
+  Select,
+  SelectGroup,
+  SelectValue,
+  SelectTrigger,
+  SelectContent,
+  SelectLabel,
+  SelectItem,
+  SelectSeparator,
+} from './select'
+export { Skeleton } from './skeleton'

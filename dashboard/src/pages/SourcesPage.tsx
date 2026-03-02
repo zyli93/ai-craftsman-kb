@@ -1,8 +1,5 @@
-export function SourcesPage() {
-  return (
-    <div>
-      <h2 className="text-2xl font-bold tracking-tight mb-4">Sources</h2>
-      <p className="text-muted-foreground">Source CRUD and status will appear here.</p>
-    </div>
-  )
-}
+/**
+ * SourcesPage — router entry point that delegates to the Sources component.
+ * Keeping this file preserves the existing App.tsx import without changes.
+ */
+export { Sources as SourcesPage } from './Sources'
