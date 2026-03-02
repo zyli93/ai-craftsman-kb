@@ -20,6 +20,7 @@ from ..llm.router import LLMRouter
 from ..processing.filter import ContentFilter
 from .base import BaseIngestor
 from .hackernews import HackerNewsIngestor
+from .rss import RSSIngestor
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +28,7 @@ logger = logging.getLogger(__name__)
 # Registry of available ingestors — extended by later tasks (10-15)
 INGESTORS: dict[str, type[BaseIngestor]] = {
     "hn": HackerNewsIngestor,
+    "rss": RSSIngestor,
 }
 
 
