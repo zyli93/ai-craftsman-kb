@@ -176,15 +176,67 @@ def search(
     When --format is specified, output is rendered as Markdown or JSON.
     Use --output to write the result to a file instead of stdout.
     """
-    config: AppConfig = ctx.obj["config"]  # noqa: F841 — used when search is implemented
-    # Search engine not yet implemented — show a placeholder notice
-    console.print(
-        f"[dim]search:[/dim] query=[bold]{query!r}[/bold] "
-        f"mode={mode} limit={limit} sources={list(source) or 'all'}"
-    )
-    if fmt:
-        console.print(f"[dim]format:[/dim] {fmt}" + (f" -> {output}" if output else " -> stdout"))
-    console.print("[yellow]Search not yet implemented (task_21).[/yellow]")
+    config: AppConfig = ctx.obj["config"]
+
+    # Validate the --since date before running async code
+    if since is not None:
+        try:
+            from datetime import date
+            date.fromisoformat(since)
+        except ValueError:
+            print_error(
+                f"Invalid date format: {since!r}",
+                hint="Use ISO 8601 format, e.g. 2025-01-01",
+            )
+            return
+
+    async def _run() -> None:
+        from .db.sqlite import get_db, init_db
+        from .processing.embedder import Embedder
+        from .search.hybrid import HybridSearch
+        from .search.vector_store import VectorStore
+
+        data_dir = _get_data_dir(config)
+        await init_db(data_dir)
+
+        async with get_db(data_dir) as conn:
+            embedder = Embedder(config)
+            vector_store = VectorStore(config)
+            searcher = HybridSearch(config, vector_store, embedder)
+
+            results = await searcher.search(
+                conn=conn,
+                query=query,
+                mode=mode,
+                source_types=list(source) if source else None,
+                since=since,
+                limit=limit,
+            )
+
+        if not results:
+            if mode in ("semantic", "hybrid"):
+                # Check if this might be an empty vector store
+                try:
+                    qdrant_info = vector_store.get_collection_info()
+                    if qdrant_info.get("vectors_count", 0) == 0:
+                        console.print(
+                            "[yellow]No embeddings found. Run [bold]cr ingest[/bold] first.[/yellow]"
+                        )
+                        return
+                except Exception:
+                    pass
+            console.print("[yellow]No results found.[/yellow]")
+            return
+
+        from .cli_output import print_search_results
+        print_search_results(results)
+
+    try:
+        asyncio.run(_run())
+    except Exception as e:
+        print_error(f"Search failed: {e}")
+        if ctx.obj.get("verbose"):
+            console.print_exception()
 
 
 # ── Ingest URL ────────────────────────────────────────────────────────────────
@@ -237,49 +289,28 @@ def ingest_url(ctx: click.Context, url: str, tag: tuple[str, ...]) -> None:
 @click.pass_context
 def entities(ctx: click.Context, entity_type: str | None, top: int) -> None:
     """List top entities by mention count."""
-    config: AppConfig = ctx.obj["config"]  # noqa: F841
+    config: AppConfig = ctx.obj["config"]
 
     async def _run() -> None:
-        try:
-            import json as _json
+        from .db.sqlite import get_db, init_db
+        from .search.entity_search import EntitySearch
 
-            from .db.models import EntityRow
-            from .db.queries import search_entities_fts
-            from .db.sqlite import get_db, init_db
+        data_dir = _get_data_dir(config)
+        await init_db(data_dir)
+        async with get_db(data_dir) as conn:
+            entity_search = EntitySearch()
+            entity_rows = await entity_search.list_entities(
+                conn, entity_type=entity_type, limit=top
+            )
 
-            data_dir = _get_data_dir(config)
-            await init_db(data_dir)
-            async with get_db(data_dir) as conn:
-                # When entity_type filter is given, use FTS to narrow down;
-                # otherwise list all entities ordered by mention_count.
-                if entity_type:
-                    entity_rows = await search_entities_fts(conn, entity_type, limit=top)
-                else:
-                    async with conn.execute(
-                        "SELECT * FROM entities ORDER BY mention_count DESC LIMIT ?",
-                        (top,),
-                    ) as cursor:
-                        raw_rows = await cursor.fetchall()
+        print_entities(entity_rows)
 
-                    def _parse(row) -> EntityRow:
-                        # aiosqlite.Row supports key access; convert to dict manually
-                        d = {k: row[k] for k in row.keys()}
-                        if isinstance(d.get("metadata"), str):
-                            try:
-                                d["metadata"] = _json.loads(d["metadata"])
-                            except Exception:
-                                d["metadata"] = {}
-                        return EntityRow(**d)
-
-                    entity_rows = [_parse(r) for r in raw_rows]
-
-            print_entities(entity_rows)
-        except Exception as e:
-            print_error(f"Could not list entities: {e}")
-            if ctx.obj.get("verbose"):
-                console.print_exception()
-
-    asyncio.run(_run())
+    try:
+        asyncio.run(_run())
+    except Exception as e:
+        print_error(f"Could not list entities: {e}")
+        if ctx.obj.get("verbose"):
+            console.print_exception()
 
 
 # ── Radar ─────────────────────────────────────────────────────────────────────
@@ -541,7 +572,17 @@ def stats(ctx: click.Context) -> None:
 
     try:
         result = asyncio.run(_stats())
-        print_stats(result)
+
+        # Retrieve Qdrant vector store info; gracefully degrade if unavailable
+        qdrant_info: dict = {}
+        try:
+            from .search.vector_store import VectorStore
+            vector_store = VectorStore(config)
+            qdrant_info = vector_store.get_collection_info()
+        except Exception as qdrant_err:
+            logger.debug("Could not retrieve Qdrant info: %s", qdrant_err)
+
+        print_stats(result, qdrant_info=qdrant_info)
     except Exception as e:
         print_error(f"Error fetching stats: {e}")
         if ctx.obj.get("verbose"):
