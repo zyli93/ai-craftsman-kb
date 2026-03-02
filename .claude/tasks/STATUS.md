@@ -109,9 +109,9 @@ Last updated: [auto-updated by agents]
 
 | Task | Description | Domain | Wave | Status | Branch | Dependencies |
 |------|-------------|--------|------|--------|--------|-------------|
-| task_33 | Overview page (stats, health, recent docs) | frontend | 14 | 🔵 in-progress | task/33-overview-page | 30, 32 |
-| task_34 | Source editor page (CRUD + status) | frontend | 14 | 🔵 in-progress | task/34-source-editor | 30, 32 |
-| task_35 | Search + Radar page | frontend | 14 | 🔵 in-progress | task/35-search-page | 30, 32 |
+| task_33 | Overview page (stats, health, recent docs) | frontend | 14 | ✅ done | task/33-overview-page | 30, 32 |
+| task_34 | Source editor page (CRUD + status) | frontend | 14 | 🔲 todo | task/34-source-editor | 30, 32 |
+| task_35 | Search + Radar page | frontend | 14 | 🔲 todo | task/35-search-page | 30, 32 |
 | task_36 | Entity explorer page | frontend | 14 | 🔲 todo | task/36-entity-page | 30, 32 |
 | task_37 | Document manager page | frontend | 14 | 🔲 todo | task/37-document-page | 30, 32 |
 | task_38 | Adhoc URL ingest + source discovery UI | frontend | 14 | 🔲 todo | task/38-adhoc-discovery | 30, 32 |
@@ -121,8 +121,8 @@ Last updated: [auto-updated by agents]
 
 | Task | Description | Domain | Wave | Status | Branch | Dependencies |
 |------|-------------|--------|------|--------|--------|-------------|
-| task_31 | MCP server (Python SDK) | backend | 15 | 🔵 in-progress | task/31-mcp-server | 30 |
-| task_40 | `cr server` command (FastAPI + dashboard) | backend | 15 | 🔵 in-progress | task/40-server-cmd | 30, 32 |
+| task_31 | MCP server (Python SDK) | backend | 15 | 🔲 todo | task/31-mcp-server | 30 |
+| task_40 | `cr server` command (FastAPI + dashboard) | backend | 15 | 🔲 todo | task/40-server-cmd | 30, 32 |
 | task_41 | Briefing generator engine | backend | 15 | 🔀 merged | task/41-briefing-engine | 21, 26 |
 
 ### Wave 16 — Polish (4 parallel)
