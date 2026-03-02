@@ -109,7 +109,7 @@ Last updated: [auto-updated by agents]
 
 | Task | Description | Domain | Wave | Status | Branch | Dependencies |
 |------|-------------|--------|------|--------|--------|-------------|
-| task_33 | Overview page (stats, health, recent docs) | frontend | 14 | ✅ done | task/33-overview-page | 30, 32 |
+| task_33 | Overview page (stats, health, recent docs) | frontend | 14 | 🔀 merged | task/33-overview-page | 30, 32 |
 | task_34 | Source editor page (CRUD + status) | frontend | 14 | 🔲 todo | task/34-source-editor | 30, 32 |
 | task_35 | Search + Radar page | frontend | 14 | 🔲 todo | task/35-search-page | 30, 32 |
 | task_36 | Entity explorer page | frontend | 14 | 🔲 todo | task/36-entity-page | 30, 32 |
