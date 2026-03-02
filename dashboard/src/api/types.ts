@@ -73,6 +73,7 @@ export interface Briefing {
   title: string
   query: string | null
   content: string
+  source_document_ids: string[]
   created_at: string
   format: string
 }
@@ -80,6 +81,7 @@ export interface Briefing {
 export interface BriefingCreate {
   query: string
   run_radar?: boolean
+  run_ingest?: boolean
 }
 
 export interface HealthStatus {

@@ -27,3 +27,5 @@ export {
   SelectSeparator,
 } from './select'
 export { Skeleton } from './skeleton'
+export { Textarea } from './textarea'
+export type { TextareaProps } from './textarea'
