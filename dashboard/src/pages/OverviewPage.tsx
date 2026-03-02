@@ -1,8 +1,5 @@
-export function OverviewPage() {
-  return (
-    <div>
-      <h2 className="text-2xl font-bold tracking-tight mb-4">Overview</h2>
-      <p className="text-muted-foreground">Stats, health, and recent documents will appear here.</p>
-    </div>
-  )
-}
+/**
+ * OverviewPage — router entry point that delegates to the Overview component.
+ * Keeping this file preserves the existing App.tsx import without changes.
+ */
+export { Overview as OverviewPage } from './Overview'
