@@ -179,46 +179,32 @@ def ingest_url(ctx: click.Context, url: str, tag: tuple[str, ...]) -> None:
     tags = list(tag)
 
     async def _run() -> None:
-        from .db.queries import get_document_by_url, upsert_document
-        from .db.sqlite import get_db, init_db
-        from .ingestors.adhoc import AdhocIngestor
+        from .db.sqlite import init_db
+        from .ingestors.runner import IngestRunner
 
         data_dir = _get_data_dir(config)
+        db_path = data_dir / "craftsman.db"
         await init_db(data_dir)
 
         console.print(f"[dim]Ingesting:[/dim] [bold]{url}[/bold]")
         if tags:
             console.print(f"[dim]Tags:[/dim] {tags}")
 
-        ingestor = AdhocIngestor(config)
+        runner = IngestRunner(config, llm_router=None, db_path=db_path)
         try:
-            doc = await ingestor.ingest_url(url, tags=tags)
+            report = await runner.ingest_url(url, tags=tags)
         except Exception as exc:
             print_error(f"Failed to ingest URL: {exc}")
             return
 
-        async with get_db(data_dir) as conn:
-            # Deduplicate: skip if already indexed
-            existing = await get_document_by_url(conn, doc.url)
-            if existing is not None:
-                print_warning(f"URL already indexed: {doc.url}")
-                return
-
-            doc_row = doc.to_document_row(source_id=None)
-            # Populate user_tags from adhoc_tags metadata
-            adhoc_tags = doc.metadata.get("adhoc_tags", [])
-            if adhoc_tags:
-                doc_row = doc_row.model_copy(update={"user_tags": adhoc_tags})
-            await upsert_document(conn, doc_row)
-            await conn.commit()
-
-        content_summary = (
-            f"{doc.word_count} words" if doc.word_count else "no content extracted"
-        )
-        print_success(
-            f"Ingested [{doc.content_type or 'unknown'}] "
-            f"{doc.title or repr(doc.url)} ({content_summary})"
-        )
+        if report.stored:
+            print_success(f"Ingested: {url}")
+        elif report.skipped_duplicate:
+            print_warning(f"Skipped (duplicate): {url}")
+        elif report.errors:
+            print_error(f"Failed to ingest {url}: {report.errors[0]}")
+        else:
+            print_warning(f"No content ingested for: {url}")
 
     asyncio.run(_run())
 
