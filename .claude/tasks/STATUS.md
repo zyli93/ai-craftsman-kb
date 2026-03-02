@@ -3,8 +3,8 @@
 Last updated: [auto-updated by agents]
 
 ## Progress
-- Total: 44/45 done
-- Backend: 37/37 done; task_45 complete (branch ready for merge)
+- Total: 45/45 done
+- Backend: 37/37 done; all tasks merged
 - Frontend: 8/8 done (all merged)
 
 ## Wave Execution Order
@@ -132,7 +132,7 @@ Last updated: [auto-updated by agents]
 | task_42 | Source discovery engine | backend | 16 | 🔀 merged | task/42-source-discovery | 03 |
 | task_43 | Rich CLI output + progress bars | backend | 16 | 🔀 merged | task/43-rich-cli | 08 |
 | task_44 | Export functionality | backend | 16 | 🔀 merged | task/44-export | 21 |
-| task_45 | Error resilience + `cr doctor` | backend | 16 | ✅ done | task/45-resilience | all prior |
+| task_45 | Error resilience + `cr doctor` | backend | 16 | 🔀 merged | task/45-resilience | all prior |
 
 ## Status Legend
 - 🔲 todo — not started
