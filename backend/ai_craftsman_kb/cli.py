@@ -148,6 +148,18 @@ def ingest_pro(ctx: click.Context, source: str | None) -> None:
     default="hybrid",
     show_default=True,
 )
+@click.option(
+    "--output", "-o",
+    type=click.Path(),
+    default=None,
+    help="Write output to file instead of stdout",
+)
+@click.option(
+    "--format", "fmt",
+    type=click.Choice(["markdown", "json"]),
+    default=None,
+    help="Output format (default: pretty terminal output)",
+)
 @click.pass_context
 def search(
     ctx: click.Context,
@@ -156,14 +168,22 @@ def search(
     since: str | None,
     limit: int,
     mode: str,
+    output: str | None,
+    fmt: str | None,
 ) -> None:
-    """Search indexed content."""
+    """Search indexed content.
+
+    When --format is specified, output is rendered as Markdown or JSON.
+    Use --output to write the result to a file instead of stdout.
+    """
     config: AppConfig = ctx.obj["config"]  # noqa: F841 — used when search is implemented
     # Search engine not yet implemented — show a placeholder notice
     console.print(
         f"[dim]search:[/dim] query=[bold]{query!r}[/bold] "
         f"mode={mode} limit={limit} sources={list(source) or 'all'}"
     )
+    if fmt:
+        console.print(f"[dim]format:[/dim] {fmt}" + (f" -> {output}" if output else " -> stdout"))
     console.print("[yellow]Search not yet implemented (task_21).[/yellow]")
 
 
@@ -456,14 +476,32 @@ def delete(ctx: click.Context, document_id: str) -> None:
 @click.argument("topic")
 @click.option("--run-radar/--no-radar", default=True, show_default=True)
 @click.option("--run-ingest/--no-ingest", default=True, show_default=True)
+@click.option(
+    "--output", "-o",
+    type=click.Path(),
+    default=None,
+    help="Write briefing to a Markdown file instead of printing to terminal",
+)
 @click.pass_context
-def briefing(ctx: click.Context, topic: str, run_radar: bool, run_ingest: bool) -> None:
-    """Generate a content briefing on a topic."""
+def briefing(
+    ctx: click.Context,
+    topic: str,
+    run_radar: bool,
+    run_ingest: bool,
+    output: str | None,
+) -> None:
+    """Generate a content briefing on a topic.
+
+    When --output is provided, the briefing is written to the specified file
+    as a Markdown document with YAML frontmatter.
+    """
     config: AppConfig = ctx.obj["config"]  # noqa: F841
     console.print(
         f"[dim]briefing:[/dim] topic=[bold]{topic!r}[/bold] "
         f"radar={run_radar} ingest={run_ingest}"
     )
+    if output:
+        console.print(f"[dim]output:[/dim] {output}")
     console.print("[yellow]Briefing generator not yet implemented (task_41).[/yellow]")
 
 
