@@ -115,7 +115,7 @@ Last updated: [auto-updated by agents]
 | task_36 | Entity explorer page | frontend | 14 | 🔲 todo | task/36-entity-page | 30, 32 |
 | task_37 | Document manager page | frontend | 14 | 🔀 merged | task/37-document-page | 30, 32 |
 | task_38 | Adhoc URL ingest + source discovery UI | frontend | 14 | 🔲 todo | task/38-adhoc-discovery | 30, 32 |
-| task_39 | Briefing builder page | frontend | 14 | 🔲 todo | task/39-briefing-page | 30, 32 |
+| task_39 | Briefing builder page | frontend | 14 | ✅ done | task/39-briefing-page | 30, 32 |
 
 ### Wave 15 — MCP + Server + Briefing (3 parallel)
 
