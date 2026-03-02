@@ -3,8 +3,8 @@
 Last updated: [auto-updated by agents]
 
 ## Progress
-- Total: 9/45 done
-- Backend: 8/33 done (waves 1-3 merged)
+- Total: 10/45 done
+- Backend: 9/33 done (waves 1-4 merged)
 - Frontend: 1/12 done (task_32 merged)
 
 ## Wave Execution Order
@@ -36,7 +36,7 @@ Last updated: [auto-updated by agents]
 
 | Task | Description | Domain | Wave | Status | Branch | Dependencies |
 |------|-------------|--------|------|--------|--------|-------------|
-| task_09 | Phase 1 integration + tests | integration | 4 | 🔵 in-progress | task/09-phase1-integration | 06, 07, 08 |
+| task_09 | Phase 1 integration + tests | integration | 4 | 🔀 merged | task/09-phase1-integration | 06, 07, 08 |
 
 ### Wave 5 — All Ingestors (6 parallel)
 
