@@ -57,7 +57,42 @@ def cli(ctx: click.Context, config_dir: str | None, verbose: bool) -> None:
 def ingest_pro(ctx: click.Context, source: str | None) -> None:
     """Pull latest content from all enabled pro-tier sources."""
     config: AppConfig = ctx.obj["config"]
-    click.echo(f"[ingest] Running pro ingestion (source={source or 'all'}) — not yet implemented")
+
+    async def _run() -> None:
+        from .db.sqlite import init_db, get_db  # noqa: F401
+        from .llm.router import LLMRouter
+        from .ingestors.runner import IngestRunner, get_ingestor
+
+        data_dir = _get_data_dir(config)
+        db_path = data_dir / "craftsman.db"
+
+        # Ensure DB schema is up to date before ingestion
+        await init_db(data_dir)
+
+        llm_router = LLMRouter(config)
+        runner = IngestRunner(config, llm_router, db_path)
+
+        if source:
+            try:
+                ingestor = get_ingestor(source, config)
+            except ValueError as e:
+                click.echo(f"Error: {e}", err=True)
+                return
+            reports = [await runner.run_source(ingestor)]
+        else:
+            reports = await runner.run_all()
+
+        for r in reports:
+            err_count = len(r.errors)
+            click.echo(
+                f"{r.source_type}: fetched={r.fetched} "
+                f"passed={r.passed_filter} stored={r.stored} "
+                f"dupes={r.skipped_duplicate} errors={err_count}"
+            )
+            for err in r.errors:
+                click.echo(f"  ERROR: {err}", err=True)
+
+    asyncio.run(_run())
 
 
 # ── Search ────────────────────────────────────────────────────────────────────
