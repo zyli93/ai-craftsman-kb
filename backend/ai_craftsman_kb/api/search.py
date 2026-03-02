@@ -1,10 +1,11 @@
-"""FastAPI router for search endpoints.
+"""FastAPI router for document search endpoint.
 
-Provides endpoints for hybrid search over indexed documents, with optional
-export support via ``?format=`` query parameter or ``Accept`` header.
+Provides:
+- GET /api/search — hybrid/semantic/keyword search over documents
+  with optional export format support (format=markdown|json).
 
 Supported formats:
-- Default (no format param): JSON response with SearchResult objects.
+- Default (no format param): JSON response with SearchResultOut objects.
 - ``?format=markdown``: Returns a ``text/markdown`` response suitable for
   saving as a ``.md`` file or rendering in a Markdown viewer.
 - ``?format=json``: Returns the same JSON as the default but as an explicit
@@ -14,198 +15,150 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
-from pathlib import Path
-from typing import Any
+from typing import Annotated, Any, Literal
 
 import aiosqlite
-from fastapi import APIRouter, Depends, Query, Response
-from pydantic import BaseModel
+from fastapi import APIRouter, Depends, Query, Request, Response
+
+from ..search.hybrid import HybridSearch
+from .deps import get_conn
+from .documents import _doc_row_to_out
+from .models import DocumentOut, SearchResultOut
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api", tags=["search"])
 
-# ---------------------------------------------------------------------------
-# Response models
-# ---------------------------------------------------------------------------
 
-
-class SearchResultResponse(BaseModel):
-    """API response model for a single search result.
-
-    Maps directly to the fields on
-    :class:`~ai_craftsman_kb.search.hybrid.SearchResult`.
-    """
-
-    document_id: str
-    score: float
-    title: str | None
-    url: str
-    source_type: str
-    author: str | None
-    published_at: str | None
-    excerpt: str | None
-    origin: str
-
-
-class SearchResponse(BaseModel):
-    """Wrapper response containing search results and metadata."""
-
-    query: str
-    total: int
-    mode: str
-    results: list[SearchResultResponse]
-
-
-# ---------------------------------------------------------------------------
-# Dependency: database connection
-# ---------------------------------------------------------------------------
-
-_DEFAULT_DATA_DIR = Path.home() / ".ai-craftsman-kb" / "data"
-
-
-async def get_connection() -> aiosqlite.Connection:
-    """Yield an aiosqlite connection for use in route handlers.
-
-    In production, the data_dir should be injected from AppConfig via
-    FastAPI app state or a startup dependency. This default is used when
-    the app is started without explicit config injection.
-
-    Yields:
-        An open aiosqlite connection.
-    """
-    from ..db.sqlite import get_db
-
-    async with get_db(_DEFAULT_DATA_DIR) as conn:
-        yield conn
-
-
-# ---------------------------------------------------------------------------
-# Routes
-# ---------------------------------------------------------------------------
-
-
-@router.get("/search")
+@router.get("/search", response_model=list[SearchResultOut])
 async def search_documents(
-    q: str = Query(..., description="Search query string"),
-    mode: str = Query(
+    q: str = Query(
+        ...,
+        min_length=1,
+        description="Search query (required, non-empty)",
+    ),
+    mode: Literal["hybrid", "semantic", "keyword"] = Query(
         default="hybrid",
         description="Search mode: hybrid, semantic, or keyword",
     ),
-    source: list[str] = Query(
-        default=[],
-        description="Filter by source type (repeatable: ?source=hn&source=arxiv)",
+    source_type: str | None = Query(
+        default=None,
+        description="Comma-separated source types to restrict, e.g. 'hn,arxiv'",
     ),
     since: str | None = Query(
         default=None,
-        description="Filter results published after this date (YYYY-MM-DD)",
+        description="ISO 8601 date lower bound for published_at, e.g. '2025-01-01'",
     ),
-    limit: int = Query(default=20, ge=1, le=200, description="Maximum results"),
+    limit: int = Query(default=20, ge=1, le=100, description="Maximum results"),
     format: str | None = Query(
         default=None,
-        description="Export format: 'markdown' or 'json' (default: JSON response)",
+        description="Export format: 'markdown' or 'json' (default: structured JSON)",
     ),
-    conn: aiosqlite.Connection = Depends(get_connection),
+    request: Request = None,
+    conn: Annotated[aiosqlite.Connection, Depends(get_conn)] = None,
 ) -> Any:
-    """Search indexed documents using hybrid (FTS5 + vector) search.
+    """Search documents using hybrid, semantic, or keyword search.
 
-    Returns results as JSON by default. Pass ``?format=markdown`` to receive
-    the results as a Markdown document with ``text/markdown`` content-type,
+    The default mode is 'hybrid', which combines FTS5 keyword search and
+    Qdrant vector search via Reciprocal Rank Fusion (RRF).
+
+    An empty ``q`` parameter returns HTTP 422 (handled automatically by
+    FastAPI's ``min_length=1`` constraint).
+
+    Pass ``?format=markdown`` to receive results as a Markdown document,
     suitable for saving as a ``.md`` file.
 
     Args:
-        q: Search query string (required).
-        mode: Search strategy — ``'hybrid'`` (default), ``'semantic'``, or
-            ``'keyword'``.
-        source: List of source types to restrict results to (optional).
-        since: ISO date string lower bound for ``published_at`` (optional).
-        limit: Maximum number of results to return (1-200, default 20).
-        format: Optional export format — ``'markdown'`` or ``'json'``.
-            When omitted, a structured JSON response is returned.
-        conn: Database connection (injected by FastAPI dependency).
+        q: Search query string (required, minimum length 1).
+        mode: Search strategy ('hybrid', 'semantic', 'keyword').
+        source_type: Comma-separated source type filter (e.g. 'hn,arxiv').
+        since: ISO 8601 date string for filtering by published_at.
+        limit: Maximum results to return (1-100, default 20).
+        format: Optional export format — 'markdown' or 'json'. Default is
+                structured JSON with SearchResultOut objects.
+        request: FastAPI request object (used to access app state services).
+        conn: DB connection (injected).
 
     Returns:
-        - If ``format=markdown``: A ``text/markdown`` :class:`~fastapi.Response`.
-        - If ``format=json``: An ``application/json`` :class:`~fastapi.Response`
-          containing the raw JSON array.
-        - Otherwise: A :class:`SearchResponse` Pydantic model (default JSON).
-
-    Raises:
-        HTTPException 400: If ``mode`` or ``format`` is not a valid value.
+        Either a list of SearchResultOut (default), or a formatted Response
+        when ``format`` is specified.
     """
-    from fastapi import HTTPException
-
-    # Validate mode
-    valid_modes = {"hybrid", "semantic", "keyword"}
-    if mode not in valid_modes:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Invalid mode '{mode}'. Must be one of: {', '.join(sorted(valid_modes))}",
-        )
-
-    # Validate format
+    # Validate export format
     valid_formats = {None, "markdown", "json"}
     if format not in valid_formats:
+        from fastapi import HTTPException
         raise HTTPException(
             status_code=400,
             detail=f"Invalid format '{format}'. Must be one of: markdown, json",
         )
 
-    # Run the search
-    try:
-        from ..config import load_config
-        from ..processing.embedder import Embedder
-        from ..search.hybrid import HybridSearch
-        from ..search.vector_store import VectorStore
+    # Parse comma-separated source types
+    source_types: list[str] | None = None
+    if source_type:
+        source_types = [s.strip() for s in source_type.split(",") if s.strip()]
 
-        config = load_config()
-        embedder = Embedder(config)
-        vector_store = VectorStore(config)
-        searcher = HybridSearch(config, vector_store, embedder)
+    # Get shared service instances from app state
+    vector_store = request.app.state.vector_store
+    embedder = request.app.state.embedder
+    config = request.app.state.config
 
-        results = await searcher.search(
-            conn=conn,
-            query=q,
-            mode=mode,
-            source_types=source if source else None,
-            since=since,
-            limit=limit,
+    searcher = HybridSearch(config=config, vector_store=vector_store, embedder=embedder)
+
+    results = await searcher.search(
+        conn,
+        query=q,
+        mode=mode,
+        source_types=source_types,
+        since=since,
+        limit=limit,
+    )
+
+    # Convert SearchResult objects to SearchResultOut response models.
+    # HybridSearch returns SearchResult which has document fields directly
+    # (not a DocumentRow). We reconstruct a DocumentOut from those fields.
+    output: list[SearchResultOut] = []
+    for result in results:
+        doc_out = DocumentOut(
+            id=result.document_id,
+            title=result.title,
+            url=result.url,
+            source_type=result.source_type,
+            origin=result.origin,
+            author=result.author,
+            published_at=result.published_at,
+            fetched_at="",  # not available from search result
+            word_count=None,
+            is_embedded=True,  # must be embedded to appear in search results
+            is_favorited=False,
+            is_archived=False,
+            user_tags=[],
+            excerpt=result.excerpt,
         )
-    except Exception as exc:
-        logger.error("Search failed for query %r: %s", q, exc)
-        raise HTTPException(status_code=500, detail=f"Search failed: {exc}") from exc
+        output.append(
+            SearchResultOut(
+                document=doc_out,
+                score=result.score,
+                mode_used=mode,
+            )
+        )
 
-    # Export mode: return plain text/markdown or raw JSON string
+    # Handle export formats
     if format == "markdown":
-        from ..export import search_results_to_markdown
-
-        generated_at = datetime.now(timezone.utc).isoformat()
-        content = search_results_to_markdown(results, q, generated_at)
-        return Response(content=content, media_type="text/markdown")
+        try:
+            from ..export import search_results_to_markdown
+            # Convert to the SearchResult objects the export module expects
+            generated_at = datetime.now(timezone.utc).isoformat()
+            content = search_results_to_markdown(results, q, generated_at)
+            return Response(content=content, media_type="text/markdown")
+        except (ImportError, Exception) as e:
+            logger.warning("Markdown export failed, returning JSON: %s", e)
 
     if format == "json":
-        from ..export import search_results_to_json
+        try:
+            from ..export import search_results_to_json
+            content = search_results_to_json(results)
+            return Response(content=content, media_type="application/json")
+        except (ImportError, Exception) as e:
+            logger.warning("JSON export failed, returning structured response: %s", e)
 
-        content = search_results_to_json(results)
-        return Response(content=content, media_type="application/json")
-
-    # Default: structured JSON response
-    return SearchResponse(
-        query=q,
-        total=len(results),
-        mode=mode,
-        results=[
-            SearchResultResponse(
-                document_id=r.document_id,
-                score=r.score,
-                title=r.title,
-                url=r.url,
-                source_type=r.source_type,
-                author=r.author,
-                published_at=r.published_at,
-                excerpt=r.excerpt,
-                origin=r.origin,
-            )
-            for r in results
-        ],
-    )
+    return output

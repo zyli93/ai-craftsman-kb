@@ -7,8 +7,7 @@ Provides endpoints for:
 from __future__ import annotations
 
 import logging
-from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 
 import aiosqlite
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -16,7 +15,7 @@ from pydantic import BaseModel
 
 from ..db.models import DiscoveredSourceRow
 from ..db.queries import list_discovered_sources, update_discovered_source_status
-from ..db.sqlite import get_db
+from .deps import get_conn
 
 logger = logging.getLogger(__name__)
 
@@ -59,29 +58,6 @@ class StatusUpdateRequest(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Dependency: database connection
-# ---------------------------------------------------------------------------
-
-# Data dir is resolved from the module path as a fallback default.
-# In production this is passed via lifespan or app state.
-_DEFAULT_DATA_DIR = Path.home() / ".ai-craftsman-kb" / "data"
-
-
-async def get_connection() -> aiosqlite.Connection:
-    """Yield an aiosqlite connection for use in route handlers.
-
-    Note: In production, the data_dir should be injected from AppConfig
-    via FastAPI app state or a dependency that reads the config. This
-    default is used when the app is started without explicit config injection.
-
-    Yields:
-        An open aiosqlite connection.
-    """
-    async with get_db(_DEFAULT_DATA_DIR) as conn:
-        yield conn
-
-
-# ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
 
@@ -90,7 +66,7 @@ async def get_connection() -> aiosqlite.Connection:
 async def list_discovered(
     status: str = Query(default="suggested", description="Filter by status: suggested, added, dismissed"),
     limit: int = Query(default=20, ge=1, le=200, description="Maximum results to return"),
-    conn: aiosqlite.Connection = Depends(get_connection),
+    conn: Annotated[aiosqlite.Connection, Depends(get_conn)] = None,
 ) -> DiscoverListResponse:
     """Return discovered sources filtered by status.
 
@@ -147,7 +123,7 @@ async def list_discovered(
 async def update_discovered_status(
     source_id: str,
     body: StatusUpdateRequest,
-    conn: aiosqlite.Connection = Depends(get_connection),
+    conn: Annotated[aiosqlite.Connection, Depends(get_conn)] = None,
 ) -> DiscoveredSourceResponse:
     """Update the status of a discovered source suggestion.
 
