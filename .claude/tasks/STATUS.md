@@ -3,8 +3,8 @@
 Last updated: [auto-updated by agents]
 
 ## Progress
-- Total: 6/45 done
-- Backend: 5/33 done (waves 1-2 merged)
+- Total: 9/45 done
+- Backend: 8/33 done (waves 1-3 merged)
 - Frontend: 1/12 done (task_32 merged)
 
 ## Wave Execution Order
@@ -28,9 +28,9 @@ Last updated: [auto-updated by agents]
 
 | Task | Description | Domain | Wave | Status | Branch | Dependencies |
 |------|-------------|--------|------|--------|--------|-------------|
-| task_06 | HN ingestor (pro + radar) | backend | 3 | 🔵 in-progress | task/06-hn-ingestor | 02, 03, 05 |
-| task_07 | Content filter (LLM + keyword) | backend | 3 | 🔵 in-progress | task/07-content-filter | 04, 05 |
-| task_08 | CLI skeleton (Click) | backend | 3 | 🔵 in-progress | task/08-cli | 02, 03 |
+| task_06 | HN ingestor (pro + radar) | backend | 3 | 🔀 merged | task/06-hn-ingestor | 02, 03, 05 |
+| task_07 | Content filter (LLM + keyword) | backend | 3 | 🔀 merged | task/07-content-filter | 04, 05 |
+| task_08 | CLI skeleton (Click) | backend | 3 | 🔀 merged | task/08-cli | 02, 03 |
 
 ### Wave 4 — Phase 1 Integration (sequential)
 
