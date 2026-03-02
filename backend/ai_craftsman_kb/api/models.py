@@ -9,7 +9,6 @@ from __future__ import annotations
 
 from pydantic import BaseModel
 
-
 # ---------------------------------------------------------------------------
 # Document models
 # ---------------------------------------------------------------------------
@@ -92,18 +91,34 @@ class SystemStats(BaseModel):
     db_size_bytes: int
 
 
+class HealthCheckResult(BaseModel):
+    """Result of a single health check.
+
+    Attributes:
+        status: Outcome of the check — 'ok', 'warn', or 'error'.
+        message: Human-readable summary, including a fix hint on failure.
+    """
+
+    status: str  # 'ok' | 'warn' | 'error'
+    message: str
+
+
 class HealthOut(BaseModel):
     """API response model for the health check endpoint.
 
     Attributes:
-        status: 'ok' if healthy.
+        status: 'ok' if all critical components are healthy, else 'degraded'.
         db: Whether the SQLite database is reachable.
         qdrant: Whether the Qdrant vector store is reachable.
+        checks: Extended diagnostics map (only present when ?full=true).
+            Keys are check names (e.g. 'openai_key', 'hn_connectivity').
+            Values are HealthCheckResult instances with status + message.
     """
 
     status: str
     db: bool
     qdrant: bool
+    checks: dict[str, HealthCheckResult] | None = None
 
 
 # ---------------------------------------------------------------------------

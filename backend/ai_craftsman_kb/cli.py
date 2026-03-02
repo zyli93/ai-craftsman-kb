@@ -5,9 +5,12 @@ thin: parse options, call business logic, pass results to the printer.
 """
 import asyncio
 import logging
+import shutil
 from pathlib import Path
+from typing import Any
 
 import click
+import httpx
 
 from .cli_output import (
     console,
@@ -669,41 +672,257 @@ def stats(ctx: click.Context) -> None:
 
 # ── Doctor ────────────────────────────────────────────────────────────────────
 
+# Individual doctor check functions — each returns (status, message) where
+# status is 'ok' | 'warn' | 'error' and message is a human-readable summary
+# with an actionable fix hint when the status is not 'ok'.
+
+
+async def _check_config(config: AppConfig) -> tuple[str, str]:
+    """Verify the config loaded successfully and report the data directory.
+
+    Args:
+        config: Loaded application configuration.
+
+    Returns:
+        Always returns ('ok', data_dir path string).
+    """
+    data_dir = Path(config.settings.data_dir).expanduser()
+    return ("ok", f"data_dir={data_dir}")
+
+
+async def _check_database(config: AppConfig) -> tuple[str, str]:
+    """Open the SQLite database and count documents.
+
+    Args:
+        config: Loaded application configuration (provides data_dir).
+
+    Returns:
+        ('ok', doc count message) or ('error', error description with fix hint).
+    """
+    import aiosqlite
+
+    data_dir = Path(config.settings.data_dir).expanduser()
+    db_path = data_dir / "craftsman.db"
+    try:
+        async with aiosqlite.connect(db_path) as conn:
+            async with conn.execute("SELECT COUNT(*) FROM documents") as cursor:
+                row = await cursor.fetchone()
+                count = row[0] if row else 0
+        return ("ok", f"{count} documents")
+    except Exception as exc:
+        return (
+            "error",
+            f"Cannot open DB at {db_path}: {exc}. Run `cr ingest` to initialise.",
+        )
+
+
+async def _check_qdrant(config: AppConfig) -> tuple[str, str]:
+    """Initialise VectorStore and query the collection info.
+
+    Args:
+        config: Loaded application configuration (provides Qdrant path).
+
+    Returns:
+        ('ok', vector count) or ('error', description with fix hint).
+    """
+    try:
+        from .search.vector_store import VectorStore
+
+        vs = VectorStore(config)
+        info = vs.get_collection_info()
+        count = info.get("vectors_count", 0)
+        return ("ok", f"{count} vectors")
+    except Exception as exc:
+        return (
+            "error",
+            f"Qdrant unavailable: {exc}. Run `cr ingest` to initialise.",
+        )
+
+
+async def _check_api_key(config: AppConfig, provider: str) -> tuple[str, str]:
+    """Check that the named LLM provider has an API key configured.
+
+    Missing keys are reported as 'warn' (not 'error') because providers are
+    optional — the user may not need every provider.
+
+    Args:
+        config: Loaded application configuration.
+        provider: Provider name, e.g. 'openai', 'anthropic', 'openrouter'.
+
+    Returns:
+        ('ok', masked key prefix) or ('warn', hint to set the env var).
+    """
+    env_var = f"{provider.upper()}_API_KEY"
+    pcfg = config.settings.providers.get(provider)
+    if pcfg and pcfg.api_key:
+        # Show first 6 chars so user can verify it's the right key
+        masked = pcfg.api_key[:6] + "…"
+        return ("ok", f"key set ({masked})")
+    return ("warn", f"Not configured — set {env_var} or add to settings.yaml")
+
+
+async def _check_youtube_key(config: AppConfig) -> tuple[str, str]:
+    """Check that the YouTube Data API key is configured.
+
+    Args:
+        config: Loaded application configuration.
+
+    Returns:
+        ('ok', masked key) or ('warn', hint to set YOUTUBE_API_KEY).
+    """
+    yt = config.settings.youtube
+    if yt.api_key:
+        masked = yt.api_key[:6] + "…"
+        return ("ok", f"key set ({masked})")
+    return ("warn", "Not configured — set YOUTUBE_API_KEY or add to settings.yaml")
+
+
+async def _check_reddit_credentials(config: AppConfig) -> tuple[str, str]:
+    """Check that Reddit OAuth credentials (client_id + client_secret) are set.
+
+    Args:
+        config: Loaded application configuration.
+
+    Returns:
+        ('ok', masked id) or ('warn', hint to set REDDIT_CLIENT_ID / SECRET).
+    """
+    reddit = config.settings.reddit
+    if reddit.client_id and reddit.client_secret:
+        masked_id = reddit.client_id[:6] + "…"
+        return ("ok", f"client_id set ({masked_id})")
+    missing = []
+    if not reddit.client_id:
+        missing.append("REDDIT_CLIENT_ID")
+    if not reddit.client_secret:
+        missing.append("REDDIT_CLIENT_SECRET")
+    return (
+        "warn",
+        f"Not configured — set {', '.join(missing)} or add to settings.yaml",
+    )
+
+
+async def _check_connectivity(url: str, _name: str) -> tuple[str, str]:
+    """Perform a GET request to *url* with a 5-second timeout.
+
+    Args:
+        url: The URL to check.
+        _name: Human-readable name for the service (unused but kept for call-site clarity).
+
+    Returns:
+        ('ok', HTTP status) or ('error', 'Unreachable: <reason>').
+    """
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            response = await client.get(url)
+        return ("ok", f"HTTP {response.status_code}")
+    except Exception as exc:
+        return ("error", f"Unreachable: {exc}")
+
+
+async def _check_hn_connectivity() -> tuple[str, str]:
+    """Check connectivity to the HN Algolia search API.
+
+    Returns:
+        Result of _check_connectivity for the HN endpoint.
+    """
+    return await _check_connectivity(
+        "https://hn.algolia.com/api/v1/search?query=test&hitsPerPage=1",
+        "HN Algolia",
+    )
+
+
+async def _check_arxiv_connectivity() -> tuple[str, str]:
+    """Check connectivity to the ArXiv API.
+
+    Returns:
+        Result of _check_connectivity for the ArXiv endpoint.
+    """
+    return await _check_connectivity(
+        "https://export.arxiv.org/api/query?search_query=all:test&max_results=1",
+        "ArXiv",
+    )
+
+
+async def _check_data_dir(config: AppConfig) -> tuple[str, str]:
+    """Check that the data directory exists (or can be created) and is writable.
+
+    Also reports free disk space.
+
+    Args:
+        config: Loaded application configuration.
+
+    Returns:
+        ('ok', path + free space) or ('error', description with fix hint).
+    """
+    data_dir = Path(config.settings.data_dir).expanduser()
+    try:
+        data_dir.mkdir(parents=True, exist_ok=True)
+        # Verify writability by creating and removing a sentinel file
+        sentinel = data_dir / ".doctor_write_test"
+        sentinel.write_text("ok")
+        sentinel.unlink()
+        # Report free disk space
+        usage = shutil.disk_usage(data_dir)
+        free_gb = usage.free / (1024 ** 3)
+        return ("ok", f"{data_dir} ({free_gb:.1f} GB free)")
+    except Exception as exc:
+        return ("error", f"Data dir not writable ({data_dir}): {exc}")
+
+
+async def _run_doctor(config: AppConfig) -> None:
+    """Run all health checks and print a coloured report to the console.
+
+    Checks are always run to completion — a single failure does not abort the
+    rest. If any check reports 'error', the process exits with code 1 so that
+    CI scripts can detect failures via ``cr doctor || exit 1``.
+
+    Args:
+        config: Loaded application configuration.
+
+    Raises:
+        SystemExit(1): If one or more checks have status 'error'.
+    """
+    checks: list[tuple[str, Any]] = [
+        ("Config file", _check_config(config)),
+        ("SQLite DB", _check_database(config)),
+        ("Qdrant", _check_qdrant(config)),
+        ("OpenAI API key", _check_api_key(config, "openai")),
+        ("Anthropic API key", _check_api_key(config, "anthropic")),
+        ("OpenRouter API key", _check_api_key(config, "openrouter")),
+        ("YouTube API key", _check_youtube_key(config)),
+        ("Reddit credentials", _check_reddit_credentials(config)),
+        ("HN connectivity", _check_hn_connectivity()),
+        ("ArXiv connectivity", _check_arxiv_connectivity()),
+        ("Data directory", _check_data_dir(config)),
+    ]
+
+    all_ok = True
+    for name, coro in checks:
+        try:
+            status, message = await coro
+        except Exception as exc:
+            status, message = "error", str(exc)
+
+        if status == "ok":
+            icon = "[green]✓[/green]"
+        elif status == "warn":
+            icon = "[yellow]⚠[/yellow]"
+        else:
+            icon = "[red]✗[/red]"
+            all_ok = False
+
+        console.print(f"  {icon} {name:<30s} {message}")
+
+    if all_ok:
+        console.print("\n[green]All checks passed. System ready.[/green]")
+    else:
+        console.print("\n[red]Some checks failed. See messages above.[/red]")
+        raise SystemExit(1)
+
+
 @cli.command("doctor")
 @click.pass_context
 def doctor(ctx: click.Context) -> None:
-    """Check system health: config, API keys, database."""
+    """Check system health and configuration."""
     config: AppConfig = ctx.obj["config"]
-    issues: list[str] = []
-
-    # Check providers — every non-ollama provider needs an API key
-    providers = config.settings.providers
-    for name, pcfg in providers.items():
-        if name != "ollama" and not pcfg.api_key:
-            issues.append(f"{name}: API key not set")
-
-    # Resolve data directory
-    data_dir = Path(config.settings.data_dir).expanduser()
-
-    from rich.panel import Panel
-    from rich.table import Table
-
-    check_table = Table(box=None, show_header=False, pad_edge=False)
-    check_table.add_column("Check", style="bold")
-    check_table.add_column("Status")
-
-    check_table.add_row("Config loaded", "[green]OK[/green]")
-    check_table.add_row(
-        "Data directory",
-        f"{data_dir} ([green]exists[/green])" if data_dir.exists()
-        else f"{data_dir} ([dim]will be created[/dim])",
-    )
-
-    console.print(Panel(check_table, title="[bold blue]AI Craftsman KB Doctor[/bold blue]", expand=False))
-
-    if issues:
-        console.print("\n[bold yellow]Warnings:[/bold yellow]")
-        for issue in issues:
-            print_warning(issue)
-    else:
-        print_success("All checks passed.")
+    asyncio.run(_run_doctor(config))
