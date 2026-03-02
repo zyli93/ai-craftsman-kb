@@ -85,29 +85,41 @@ async def _generate_briefing_content(
     # Try to use the BriefingGenerator if it is available in app state
     try:
         from ..briefing.generator import BriefingGenerator
+        from ..ingestors.runner import IngestRunner, INGESTORS
+        from ..radar.engine import RadarEngine
+        from ..search.hybrid import HybridSearch
 
         config = request.app.state.config
         llm_router = request.app.state.llm_router
         vector_store = request.app.state.vector_store
         embedder = request.app.state.embedder
+        db_path = request.app.state.db_path
 
-        from ..search.hybrid import HybridSearch
         hybrid_search = HybridSearch(config=config, vector_store=vector_store, embedder=embedder)
+
+        # Build supporting engines
+        ingestors = {st: cls(config) for st, cls in INGESTORS.items()}
+        radar_engine = RadarEngine(config=config, ingestors=ingestors)
+        ingest_runner = IngestRunner(config=config, llm_router=llm_router, db_path=db_path)
 
         generator = BriefingGenerator(
             config=config,
             llm_router=llm_router,
             hybrid_search=hybrid_search,
+            radar_engine=radar_engine,
+            ingest_runner=ingest_runner,
         )
         briefing_row = await generator.generate(
             conn,
             topic=query,
+            run_radar=False,  # radar handled separately if body.run_radar=True
+            run_ingest=False,  # ingest handled separately if body.run_ingest=True
             limit=limit,
         )
         return briefing_row.title, briefing_row.content, briefing_row.source_document_ids
-    except (ImportError, AttributeError):
-        # BriefingGenerator not yet available — fall back to simple aggregation
-        pass
+    except (ImportError, AttributeError) as e:
+        # BriefingGenerator not available or app state missing — fall back to simple aggregation
+        logger.debug("BriefingGenerator not available, using fallback: %s", e)
 
     # Fallback: keyword search + simple markdown assembly
     from ..db.queries import search_documents_fts, get_document
