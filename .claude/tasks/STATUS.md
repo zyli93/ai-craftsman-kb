@@ -123,7 +123,7 @@ Last updated: [auto-updated by agents]
 |------|-------------|--------|------|--------|--------|-------------|
 | task_31 | MCP server (Python SDK) | backend | 15 | 🔲 todo | task/31-mcp-server | 30 |
 | task_40 | `cr server` command (FastAPI + dashboard) | backend | 15 | 🔲 todo | task/40-server-cmd | 30, 32 |
-| task_41 | Briefing generator engine | backend | 15 | 🔵 in-progress | task/41-briefing-engine | 21, 26 |
+| task_41 | Briefing generator engine | backend | 15 | ✅ done | task/41-briefing-engine | 21, 26 |
 
 ### Wave 16 — Polish (4 parallel)
 
