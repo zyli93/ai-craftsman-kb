@@ -77,7 +77,7 @@ Last updated: [auto-updated by agents]
 |------|-------------|--------|------|--------|--------|-------------|
 | task_21 | Hybrid search (FTS + vector + RRF) | backend | 9 | 🔀 merged | task/21-hybrid-search | 03, 20 |
 | task_24 | Auto-embed + extract on ingest hook | backend | 9 | 🔀 merged | task/24-ingest-pipeline | 18, 19, 20, 22 |
-| task_25 | Search CLI enhancements | backend | 9 | 🔲 todo | task/25-search-cli | 08, 21, 23 |
+| task_25 | Search CLI enhancements | backend | 9 | 🔵 in-progress | task/25-search-cli | 08, 21, 23 |
 
 ### Wave 10 — Radar Core (sequential)
 
@@ -102,7 +102,7 @@ Last updated: [auto-updated by agents]
 
 | Task | Description | Domain | Wave | Status | Branch | Dependencies |
 |------|-------------|--------|------|--------|--------|-------------|
-| task_30 | FastAPI REST API layer | backend | 13 | 🔲 todo | task/30-rest-api | 03, 21, 26 |
+| task_30 | FastAPI REST API layer | backend | 13 | 🔵 in-progress | task/30-rest-api | 03, 21, 26 |
 | task_32 | Dashboard scaffolding (Vite + Tailwind + shadcn) | frontend | 13 | 🔀 merged | task/32-dashboard-scaffold | none |
 
 ### Wave 14 — All Dashboard Pages (7 parallel)
@@ -123,7 +123,7 @@ Last updated: [auto-updated by agents]
 |------|-------------|--------|------|--------|--------|-------------|
 | task_31 | MCP server (Python SDK) | backend | 15 | 🔲 todo | task/31-mcp-server | 30 |
 | task_40 | `cr server` command (FastAPI + dashboard) | backend | 15 | 🔲 todo | task/40-server-cmd | 30, 32 |
-| task_41 | Briefing generator engine | backend | 15 | 🔲 todo | task/41-briefing-engine | 21, 26 |
+| task_41 | Briefing generator engine | backend | 15 | 🔵 in-progress | task/41-briefing-engine | 21, 26 |
 
 ### Wave 16 — Polish (4 parallel)
 
@@ -131,7 +131,7 @@ Last updated: [auto-updated by agents]
 |------|-------------|--------|------|--------|--------|-------------|
 | task_42 | Source discovery engine | backend | 16 | 🔀 merged | task/42-source-discovery | 03 |
 | task_43 | Rich CLI output + progress bars | backend | 16 | 🔀 merged | task/43-rich-cli | 08 |
-| task_44 | Export functionality | backend | 16 | 🔲 todo | task/44-export | 21 |
+| task_44 | Export functionality | backend | 16 | 🔵 in-progress | task/44-export | 21 |
 | task_45 | Error resilience + `cr doctor` | backend | 16 | 🔲 todo | task/45-resilience | all prior |
 
 ## Status Legend
