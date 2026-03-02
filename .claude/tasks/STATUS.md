@@ -54,7 +54,7 @@ Last updated: [auto-updated by agents]
 | Task | Description | Domain | Wave | Status | Branch | Dependencies |
 |------|-------------|--------|------|--------|--------|-------------|
 | task_16 | Adhoc URL ingestor | backend | 6 | 🔀 merged | task/16-adhoc-url | 05, 12 |
-| task_17 | Phase 2 integration + incremental fetch | integration | 6 | 🔵 in-progress | task/17-phase2-integration | 10-16 |
+| task_17 | Phase 2 integration + incremental fetch | integration | 6 | ✅ done | task/17-phase2-integration | 10-16 |
 
 ### Wave 7 — Search Foundation (3 parallel)
 
