@@ -695,7 +695,7 @@ async def _check_llm_config(config: AppConfig) -> tuple[str, str]:
     """Check that the LLM routing section is present in settings.yaml."""
     if config.settings.llm is None:
         return ("error", "llm section missing from settings.yaml — ingest and search commands will not work")
-    tasks = ["filtering", "entity_extraction", "briefing", "source_discovery"]
+    tasks = ["filtering", "entity_extraction", "briefing", "source_discovery", "keyword_extraction"]
     configured = [t for t in tasks if getattr(config.settings.llm, t, None) is not None]
     return ("ok", f"{len(configured)}/{len(tasks)} tasks configured")
 
@@ -854,6 +854,64 @@ async def _check_arxiv_connectivity() -> tuple[str, str]:
     )
 
 
+async def _check_keyword_extraction_config(config: AppConfig) -> tuple[str, str]:
+    """Check that the keyword_extraction LLM task is configured.
+
+    Args:
+        config: Loaded application configuration.
+
+    Returns:
+        ('ok', model info) if configured, ('warn', hint) otherwise.
+    """
+    if config.settings.llm is None:
+        return ("warn", "llm section missing — keyword extraction unavailable")
+    ke = config.settings.llm.keyword_extraction
+    if ke is None:
+        return ("warn", "keyword_extraction not configured in llm section of settings.yaml")
+    return ("ok", f"provider={ke.provider} model={ke.model}")
+
+
+async def _check_keyword_stats(config: AppConfig) -> tuple[str, str]:
+    """Report keyword extraction statistics from the database.
+
+    Counts documents with and without extracted keywords to help the user
+    gauge processing coverage.
+
+    Args:
+        config: Loaded application configuration.
+
+    Returns:
+        ('ok', stats summary) or ('warn', description).
+    """
+    import aiosqlite
+
+    data_dir = Path(config.settings.data_dir).expanduser()
+    db_path = data_dir / "craftsman.db"
+    try:
+        async with aiosqlite.connect(db_path) as conn:
+            # Check if the column exists (handles pre-migration DBs)
+            async with conn.execute("PRAGMA table_info(documents)") as cursor:
+                columns = {row[1] for row in await cursor.fetchall()}
+            if "is_keywords_extracted" not in columns:
+                return ("warn", "is_keywords_extracted column missing — run `cr ingest` to migrate")
+
+            async with conn.execute(
+                "SELECT COUNT(*) FROM documents WHERE is_keywords_extracted = TRUE"
+            ) as cur:
+                with_kw = (await cur.fetchone())[0]  # type: ignore[index]
+            async with conn.execute(
+                "SELECT COUNT(*) FROM documents WHERE is_keywords_extracted = FALSE"
+            ) as cur:
+                without_kw = (await cur.fetchone())[0]  # type: ignore[index]
+            total = with_kw + without_kw
+            if total == 0:
+                return ("ok", "No documents in database")
+            pct = (with_kw / total) * 100 if total else 0
+            return ("ok", f"{with_kw}/{total} documents have keywords ({pct:.0f}%)")
+    except Exception as exc:
+        return ("warn", f"Cannot query keyword stats: {exc}")
+
+
 async def _check_data_dir(config: AppConfig) -> tuple[str, str]:
     """Check that the data directory exists (or can be created) and is writable.
 
@@ -925,6 +983,8 @@ async def _run_doctor(config: AppConfig) -> None:
         ],
         ("YouTube API key", _check_youtube_key(config)),
         ("Reddit credentials", _check_reddit_credentials(config)),
+        ("Keyword extraction config", _check_keyword_extraction_config(config)),
+        ("Keyword extraction stats", _check_keyword_stats(config)),
         ("HN connectivity", _check_hn_connectivity()),
         ("ArXiv connectivity", _check_arxiv_connectivity()),
         ("Data directory", _check_data_dir(config)),
