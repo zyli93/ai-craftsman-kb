@@ -1,4 +1,4 @@
-data_dir: ~/.ai-craftsman-kb/data
+data_dir: ./data
 
 embedding:
   provider: llamacpp

@@ -173,9 +173,9 @@ class SearchConfig(BaseModel):
 class SettingsConfig(BaseModel):
     """Top-level application settings — LLM routing, embedding, server, credentials."""
 
-    data_dir: str = "~/.ai-craftsman-kb/data"
+    data_dir: str = "./data"
     embedding: EmbeddingConfig = EmbeddingConfig()
-    llm: LLMRoutingConfig
+    llm: LLMRoutingConfig | None = None
     providers: dict[str, ProviderConfig] = {}
     youtube: YoutubeAPIConfig = YoutubeAPIConfig()
     reddit: RedditAPIConfig = RedditAPIConfig()
@@ -225,6 +225,7 @@ class AppConfig(BaseModel):
     the application. Never mutated after construction.
     """
 
+    config_dir: str = ""
     sources: SourcesConfig
     settings: SettingsConfig
     filters: FiltersConfig

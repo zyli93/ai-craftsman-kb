@@ -42,7 +42,7 @@ def _interpolate_env_vars(data: Any) -> Any:
             var_name = match.group(1)
             value = os.environ.get(var_name)
             if value is None:
-                logger.warning("Environment variable %s is not set", var_name)
+                logger.debug("Environment variable %s is not set", var_name)
                 return ""
             return value
 
@@ -78,7 +78,7 @@ def _find_config_dir(config_dir: Path | None) -> Path:
         return config_dir
 
     user_dir = Path.home() / ".ai-craftsman-kb"
-    if user_dir.exists():
+    if user_dir.exists() and (user_dir / "settings.yaml").exists():
         return user_dir
 
     # The bundled config/ lives four levels up from this file:
@@ -139,14 +139,15 @@ def load_config(config_dir: Path | None = None) -> AppConfig:
     settings_data = _load_yaml(base / "settings.yaml")
     filters_data = _load_yaml(base / "filters.yaml")
 
-    # Expand ~ in data_dir at load time so the rest of the app can use it
+    # Resolve data_dir to an absolute path so the rest of the app can use it
     # as a plain string without needing to re-expand it everywhere.
     if "data_dir" in settings_data:
         settings_data["data_dir"] = str(
-            Path(settings_data["data_dir"]).expanduser()
+            Path(settings_data["data_dir"]).expanduser().resolve()
         )
 
     return AppConfig(
+        config_dir=str(base.resolve()),
         sources=SourcesConfig(**sources_data),
         settings=SettingsConfig(**settings_data),
         filters=FiltersConfig(**filters_data),

@@ -126,10 +126,11 @@ def test_server_command(runner: CliRunner, minimal_config) -> None:
 
 
 def test_doctor_command(runner: CliRunner) -> None:
-    """doctor command should print the Doctor header."""
+    """doctor command should print the Configuration and Health Checks sections."""
     result = runner.invoke(cli, ["doctor"])
     assert result.exit_code == 0
-    assert "Doctor" in result.output
+    assert "Configuration" in result.output
+    assert "Health Checks" in result.output
 
 
 def test_stats_command_no_db(runner: CliRunner, tmp_path: pytest.TempPathFactory) -> None:

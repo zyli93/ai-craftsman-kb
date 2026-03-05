@@ -115,6 +115,11 @@ class LLMRouter:
         """
         if task not in self._task_providers:
             # Access the per-task config: config.settings.llm.<task>
+            if self._config.settings.llm is None:
+                raise RuntimeError(
+                    "LLM routing is not configured. "
+                    "Add an 'llm' section to settings.yaml (run 'cr doctor' for details)."
+                )
             task_cfg = getattr(self._config.settings.llm, task)
             self._task_providers[task] = self._build_provider(
                 task_cfg.provider, task_cfg.model

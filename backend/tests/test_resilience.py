@@ -248,13 +248,14 @@ async def test_check_api_key_missing(minimal_config) -> None:
 
 
 @pytest.mark.asyncio
-async def test_check_config_returns_ok(minimal_config) -> None:
-    """_check_config always returns 'ok' with data_dir in message."""
-    from ai_craftsman_kb.cli import _check_config
+async def test_check_llm_config_returns_error_when_missing(minimal_config) -> None:
+    """_check_llm_config returns 'error' when llm is None."""
+    from ai_craftsman_kb.cli import _check_llm_config
 
-    status, message = await _check_config(minimal_config)
-    assert status == "ok"
-    assert "data_dir=" in message
+    minimal_config.settings.llm = None
+    status, message = await _check_llm_config(minimal_config)
+    assert status == "error"
+    assert "missing" in message
 
 
 @pytest.mark.asyncio

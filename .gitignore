@@ -36,9 +36,11 @@ node_modules/
 dashboard/node_modules/
 dashboard/dist/
 dashboard/.vite/
+*.tsbuildinfo
 pnpm-lock.yaml
 
 # Data directory (local DB + vectors)
+data/
 .ai-craftsman-kb/
 *.db
 *.db-shm

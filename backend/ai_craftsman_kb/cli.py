@@ -677,17 +677,14 @@ def stats(ctx: click.Context) -> None:
 # with an actionable fix hint when the status is not 'ok'.
 
 
-async def _check_config(config: AppConfig) -> tuple[str, str]:
-    """Verify the config loaded successfully and report the data directory.
 
-    Args:
-        config: Loaded application configuration.
-
-    Returns:
-        Always returns ('ok', data_dir path string).
-    """
-    data_dir = Path(config.settings.data_dir).expanduser()
-    return ("ok", f"data_dir={data_dir}")
+async def _check_llm_config(config: AppConfig) -> tuple[str, str]:
+    """Check that the LLM routing section is present in settings.yaml."""
+    if config.settings.llm is None:
+        return ("error", "llm section missing from settings.yaml — ingest and search commands will not work")
+    tasks = ["filtering", "entity_extraction", "briefing", "source_discovery"]
+    configured = [t for t in tasks if getattr(config.settings.llm, t, None) is not None]
+    return ("ok", f"{len(configured)}/{len(tasks)} tasks configured")
 
 
 async def _check_database(config: AppConfig) -> tuple[str, str]:
@@ -752,12 +749,13 @@ async def _check_api_key(config: AppConfig, provider: str) -> tuple[str, str]:
     Returns:
         ('ok', masked key prefix) or ('warn', hint to set the env var).
     """
-    env_var = f"{provider.upper()}_API_KEY"
     pcfg = config.settings.providers.get(provider)
     if pcfg and pcfg.api_key:
-        # Show first 6 chars so user can verify it's the right key
         masked = pcfg.api_key[:6] + "…"
         return ("ok", f"key set ({masked})")
+    if pcfg and pcfg.base_url:
+        return ("ok", f"local provider ({pcfg.base_url})")
+    env_var = f"{provider.upper()}_API_KEY"
     return ("warn", f"Not configured — set {env_var} or add to settings.yaml")
 
 
@@ -882,13 +880,36 @@ async def _run_doctor(config: AppConfig) -> None:
     Raises:
         SystemExit(1): If one or more checks have status 'error'.
     """
+    config_dir = Path(config.config_dir)
+    data_dir = Path(config.settings.data_dir).resolve()
+
+    # ── Configuration ─────────────────────────────────────────────────────
+    console.print("\n[bold]Configuration[/bold]")
+    config_files = [
+        ("settings.yaml", "LLM routing, providers, embedding, server settings"),
+        ("sources.yaml", "Content source definitions (HN, Reddit, YouTube, etc.)"),
+        ("filters.yaml", "Per-source content filtering rules"),
+    ]
+    console.print(f"  Config dir:  {config_dir}")
+    console.print(f"  Data dir:    {data_dir}")
+    for filename, description in config_files:
+        path = config_dir / filename
+        if path.exists():
+            size = path.stat().st_size
+            console.print(f"  [green]✓[/green] {str(path):<50s} {description} ({size} bytes)")
+        else:
+            console.print(f"  [yellow]⚠[/yellow] {str(path):<50s} {description} (missing)")
+
+    # ── Health checks ─────────────────────────────────────────────────────
+    console.print("\n[bold]Health Checks[/bold]")
     checks: list[tuple[str, Any]] = [
-        ("Config file", _check_config(config)),
+        ("LLM routing", _check_llm_config(config)),
         ("SQLite DB", _check_database(config)),
         ("Qdrant", _check_qdrant(config)),
-        ("OpenAI API key", _check_api_key(config, "openai")),
-        ("Anthropic API key", _check_api_key(config, "anthropic")),
-        ("OpenRouter API key", _check_api_key(config, "openrouter")),
+        *[
+            (f"{name.capitalize()} API key", _check_api_key(config, name))
+            for name in config.settings.providers
+        ],
         ("YouTube API key", _check_youtube_key(config)),
         ("Reddit credentials", _check_reddit_credentials(config)),
         ("HN connectivity", _check_hn_connectivity()),

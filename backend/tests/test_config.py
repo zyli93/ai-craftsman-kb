@@ -197,12 +197,12 @@ class TestEnvVarInterpolation:
         assert result == {"key": "hello-world"}
 
     def test_missing_env_var_becomes_empty_string(self, caplog: pytest.LogCaptureFixture) -> None:
-        """An unset variable becomes '' and a warning is logged."""
+        """An unset variable becomes '' and a debug message is logged."""
         raw = {"key": "${DOES_NOT_EXIST_XYZ}"}
         # Ensure the var is definitely absent
         env_copy = {k: v for k, v in os.environ.items() if k != "DOES_NOT_EXIST_XYZ"}
         with patch.dict(os.environ, env_copy, clear=True):
-            with caplog.at_level("WARNING"):
+            with caplog.at_level("DEBUG"):
                 result = _interpolate_env_vars(raw)
         assert result == {"key": ""}
         assert "DOES_NOT_EXIST_XYZ" in caplog.text
@@ -295,15 +295,14 @@ class TestValidationErrors:
         with pytest.raises(ValidationError):
             load_config(config_dir=tmp_path)
 
-    def test_missing_required_llm_field(self, tmp_path: Path) -> None:
-        """SettingsConfig requires the llm block with all four task entries."""
-        # settings without llm entirely
+    def test_missing_llm_field_defaults_to_none(self, tmp_path: Path) -> None:
+        """SettingsConfig allows missing llm block (defaults to None)."""
         _write_yaml(tmp_path / "sources.yaml", {})
         _write_yaml(tmp_path / "settings.yaml", {})
         _write_yaml(tmp_path / "filters.yaml", {})
 
-        with pytest.raises(ValidationError):
-            load_config(config_dir=tmp_path)
+        config = load_config(config_dir=tmp_path)
+        assert config.settings.llm is None
 
     def test_wrong_type_for_limit(self, tmp_path: Path) -> None:
         """Passing a string for an int field raises ValidationError."""
