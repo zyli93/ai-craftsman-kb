@@ -44,6 +44,7 @@ def _minimal_settings() -> dict:
             "entity_extraction": {"provider": "openrouter", "model": "llama-3-8b"},
             "briefing": {"provider": "anthropic", "model": "claude-3-haiku"},
             "source_discovery": {"provider": "openrouter", "model": "llama-3-8b"},
+            "keyword_extraction": {"provider": "openrouter", "model": "llama-3-8b"},
         }
     }
 
@@ -77,13 +78,14 @@ class TestLoadBundledConfig:
         assert sources.devto is not None
 
     def test_settings_llm_routing_present(self) -> None:
-        """Bundled settings.yaml includes all four LLM task routes."""
+        """Bundled settings.yaml includes all five LLM task routes."""
         config = load_config()
         llm = config.settings.llm
         assert llm.filtering.provider == "openrouter"
         assert llm.briefing.provider == "anthropic"
         assert llm.entity_extraction.provider == "openrouter"
         assert llm.source_discovery.provider == "openrouter"
+        assert llm.keyword_extraction.provider == "openrouter"
 
     def test_embedding_defaults(self) -> None:
         """Bundled settings.yaml configures the embedding block correctly."""
@@ -334,6 +336,7 @@ class TestGetProviderApiKey:
                     entity_extraction=LLMTaskConfig(provider="openrouter", model="llama"),
                     briefing=LLMTaskConfig(provider="anthropic", model="claude"),
                     source_discovery=LLMTaskConfig(provider="openrouter", model="llama"),
+                    keyword_extraction=LLMTaskConfig(provider="openrouter", model="llama"),
                 ),
             ),
             filters=FiltersConfig(),

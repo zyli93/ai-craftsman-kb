@@ -14,7 +14,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # Valid task names that map to llm routing config
-TASK_NAMES = ("filtering", "entity_extraction", "briefing", "source_discovery")
+TASK_NAMES = ("filtering", "entity_extraction", "briefing", "source_discovery", "keyword_extraction")
 
 
 class LLMRouter:
@@ -150,7 +150,7 @@ class LLMRouter:
 
         Args:
             task: One of 'filtering', 'entity_extraction', 'briefing',
-                'source_discovery'.
+                'source_discovery', 'keyword_extraction'.
             prompt: The user message.
             system: Optional system message.
             **kwargs: Additional provider-specific options (e.g. temperature,

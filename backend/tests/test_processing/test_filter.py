@@ -43,6 +43,7 @@ def _make_app_config(filters: FiltersConfig | None = None) -> AppConfig:
                 entity_extraction=LLMTaskConfig(provider="openrouter", model="llama-3-8b"),
                 briefing=LLMTaskConfig(provider="anthropic", model="claude-3-haiku"),
                 source_discovery=LLMTaskConfig(provider="openrouter", model="llama-3-8b"),
+                keyword_extraction=LLMTaskConfig(provider="openrouter", model="test-model"),
             )
         ),
         filters=filters or FiltersConfig(),

@@ -19,6 +19,9 @@ llm:
   source_discovery:
     provider: openrouter
     model: meta-llama/llama-3.1-8b-instruct
+  keyword_extraction:
+    provider: openrouter
+    model: meta-llama/llama-3.1-8b-instruct
 
 providers:
   openai:

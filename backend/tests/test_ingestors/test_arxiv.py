@@ -117,6 +117,7 @@ def _make_llm_routing() -> LLMRoutingConfig:
         entity_extraction=task_cfg,
         briefing=task_cfg,
         source_discovery=task_cfg,
+        keyword_extraction=task_cfg,
     )
 
 

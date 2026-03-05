@@ -132,6 +132,7 @@ class LLMRoutingConfig(BaseModel):
     entity_extraction: LLMTaskConfig
     briefing: LLMTaskConfig
     source_discovery: LLMTaskConfig
+    keyword_extraction: LLMTaskConfig
 
 
 class ProviderConfig(BaseModel):

@@ -106,6 +106,7 @@ def minimal_config(tmp_path: Path) -> AppConfig:
                 entity_extraction=LLMTaskConfig(provider="openrouter", model="test-model"),
                 briefing=LLMTaskConfig(provider="anthropic", model="test-model"),
                 source_discovery=LLMTaskConfig(provider="openrouter", model="test-model"),
+                keyword_extraction=LLMTaskConfig(provider="openrouter", model="test-model"),
             ),
         ),
         filters=FiltersConfig(),

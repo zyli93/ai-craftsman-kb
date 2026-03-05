@@ -62,6 +62,7 @@ def _make_config() -> AppConfig:
                 entity_extraction=task_cfg,
                 briefing=task_cfg,
                 source_discovery=task_cfg,
+                keyword_extraction=task_cfg,
             ),
         ),
         filters=FiltersConfig(),
