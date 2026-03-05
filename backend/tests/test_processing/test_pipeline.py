@@ -27,6 +27,7 @@ from ai_craftsman_kb.db.sqlite import SCHEMA_SQL
 from ai_craftsman_kb.processing.chunker import Chunker, TextChunk
 from ai_craftsman_kb.processing.embedder import Embedder, EmbeddingResult
 from ai_craftsman_kb.processing.entity_extractor import EntityExtractor
+from ai_craftsman_kb.processing.keyword_extractor import KeywordExtractor
 from ai_craftsman_kb.processing.pipeline import ProcessingPipeline, ProcessingReport
 from ai_craftsman_kb.search.vector_store import VectorStore
 
@@ -192,11 +193,19 @@ def _make_mock_entity_extractor() -> MagicMock:
     return mock
 
 
+def _make_mock_keyword_extractor() -> MagicMock:
+    """Create a mock KeywordExtractor with async extract_and_store."""
+    mock = MagicMock(spec=KeywordExtractor)
+    mock.extract_and_store = AsyncMock(return_value=["python", "machine learning"])
+    return mock
+
+
 def _make_pipeline(
     chunker: MagicMock | None = None,
     embedder: MagicMock | None = None,
     vector_store: MagicMock | None = None,
     entity_extractor: MagicMock | None = None,
+    keyword_extractor: MagicMock | None = None,
 ) -> ProcessingPipeline:
     """Create a ProcessingPipeline with all dependencies mocked."""
     return ProcessingPipeline(
@@ -205,6 +214,7 @@ def _make_pipeline(
         chunker=chunker or _make_mock_chunker(),
         vector_store=vector_store or _make_mock_vector_store(),
         entity_extractor=entity_extractor or _make_mock_entity_extractor(),
+        keyword_extractor=keyword_extractor,
     )
 
 
@@ -219,8 +229,10 @@ def test_processing_report_defaults() -> None:
     assert report.total == 0
     assert report.embedded == 0
     assert report.entity_extracted == 0
+    assert report.keywords_extracted == 0
     assert report.failed_embedding == 0
     assert report.failed_entities == 0
+    assert report.failed_keywords == 0
     assert report.errors == []
 
 
@@ -230,15 +242,19 @@ def test_processing_report_fields() -> None:
         total=10,
         embedded=8,
         entity_extracted=7,
+        keywords_extracted=6,
         failed_embedding=1,
         failed_entities=2,
+        failed_keywords=3,
         errors=["err1", "err2"],
     )
     assert report.total == 10
     assert report.embedded == 8
     assert report.entity_extracted == 7
+    assert report.keywords_extracted == 6
     assert report.failed_embedding == 1
     assert report.failed_entities == 2
+    assert report.failed_keywords == 3
     assert report.errors == ["err1", "err2"]
 
 
@@ -914,3 +930,215 @@ async def test_ingest_runner_without_pipeline_works() -> None:
         assert report.stored == 0
         assert report.embedded == 0
         assert report.entities_extracted == 0
+        assert report.keywords_extracted == 0
+
+
+# ---------------------------------------------------------------------------
+# Keyword extraction integration
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_process_document_runs_keyword_extraction() -> None:
+    """process_document calls keyword_extractor.extract_and_store when configured."""
+    kw_extractor = _make_mock_keyword_extractor()
+    pipeline = _make_pipeline(keyword_extractor=kw_extractor)
+    content = _make_long_content(200)
+    doc = _make_document(raw_content=content)
+
+    conn = await _make_in_memory_db()
+    try:
+        await _insert_test_document(conn, doc)
+        await pipeline.process_document(conn, doc)
+
+        kw_extractor.extract_and_store.assert_called_once_with(
+            conn=conn,
+            document_id=doc.id,
+            content=content,
+        )
+    finally:
+        await conn.close()
+
+
+@pytest.mark.asyncio
+async def test_process_document_skips_keywords_if_already_extracted() -> None:
+    """process_document skips keyword extraction when is_keywords_extracted=True."""
+    kw_extractor = _make_mock_keyword_extractor()
+    pipeline = _make_pipeline(keyword_extractor=kw_extractor)
+    doc = _make_document(
+        raw_content=_make_long_content(200),
+        is_embedded=True,
+        is_entities_extracted=True,
+    )
+    # Manually set is_keywords_extracted on the document
+    doc = doc.model_copy(update={"is_keywords_extracted": True})
+
+    conn = await _make_in_memory_db()
+    try:
+        await _insert_test_document(conn, doc)
+        await pipeline.process_document(conn, doc)
+
+        kw_extractor.extract_and_store.assert_not_called()
+    finally:
+        await conn.close()
+
+
+@pytest.mark.asyncio
+async def test_process_document_skips_keywords_if_no_extractor() -> None:
+    """process_document skips keyword extraction when no KeywordExtractor configured."""
+    pipeline = _make_pipeline(keyword_extractor=None)
+    content = _make_long_content(200)
+    doc = _make_document(raw_content=content)
+
+    conn = await _make_in_memory_db()
+    try:
+        await _insert_test_document(conn, doc)
+        await pipeline.process_document(conn, doc)
+        # No error, and no keyword extractor to call
+    finally:
+        await conn.close()
+
+
+@pytest.mark.asyncio
+async def test_process_document_keyword_extraction_uses_title_fallback() -> None:
+    """Keyword extraction falls back to title when raw_content is None."""
+    kw_extractor = _make_mock_keyword_extractor()
+    pipeline = _make_pipeline(keyword_extractor=kw_extractor)
+    doc = _make_document(raw_content=None, title="Interesting AI Article")
+
+    conn = await _make_in_memory_db()
+    try:
+        await _insert_test_document(conn, doc)
+        await pipeline.process_document(conn, doc)
+
+        kw_extractor.extract_and_store.assert_called_once_with(
+            conn=conn,
+            document_id=doc.id,
+            content="Interesting AI Article",
+        )
+    finally:
+        await conn.close()
+
+
+@pytest.mark.asyncio
+async def test_keyword_failure_does_not_block_other_steps() -> None:
+    """When keyword extraction fails, embedding and entity extraction still run."""
+    kw_extractor = MagicMock(spec=KeywordExtractor)
+    kw_extractor.extract_and_store = AsyncMock(
+        side_effect=RuntimeError("LLM quota exceeded")
+    )
+    entity_extractor = _make_mock_entity_extractor()
+    chunks = _make_fake_chunks(2)
+    embeddings = _make_fake_embeddings(2)
+    chunker = _make_mock_chunker(chunks)
+    embedder = _make_mock_embedder(embeddings)
+    vector_store = _make_mock_vector_store()
+
+    pipeline = _make_pipeline(
+        chunker=chunker,
+        embedder=embedder,
+        vector_store=vector_store,
+        entity_extractor=entity_extractor,
+        keyword_extractor=kw_extractor,
+    )
+
+    content = _make_long_content(200)
+    doc = _make_document(raw_content=content)
+
+    conn = await _make_in_memory_db()
+    try:
+        await _insert_test_document(conn, doc)
+        # Should not raise
+        await pipeline.process_document(conn, doc)
+
+        # Embedding and entity extraction should still have run
+        async with conn.execute(
+            "SELECT is_embedded FROM documents WHERE id = ?", (doc.id,)
+        ) as cur:
+            row = await cur.fetchone()
+        assert bool(row["is_embedded"]) is True
+
+        entity_extractor.extract_and_store.assert_called_once()
+    finally:
+        await conn.close()
+
+
+@pytest.mark.asyncio
+async def test_process_batch_counts_keywords() -> None:
+    """process_batch correctly counts keywords_extracted in the report."""
+    kw_extractor = _make_mock_keyword_extractor()
+    pipeline = _make_pipeline(keyword_extractor=kw_extractor)
+
+    docs = [
+        _make_document(raw_content=_make_long_content(200))
+        for _ in range(3)
+    ]
+
+    conn = await _make_in_memory_db()
+    try:
+        for doc in docs:
+            await _insert_test_document(conn, doc)
+
+        report = await pipeline.process_batch(conn, docs)
+        assert report.keywords_extracted == 3
+        assert report.failed_keywords == 0
+    finally:
+        await conn.close()
+
+
+@pytest.mark.asyncio
+async def test_process_batch_counts_failed_keywords() -> None:
+    """process_batch counts keyword extraction failures in failed_keywords."""
+    kw_extractor = MagicMock(spec=KeywordExtractor)
+    kw_extractor.extract_and_store = AsyncMock(
+        side_effect=RuntimeError("LLM error")
+    )
+    pipeline = _make_pipeline(keyword_extractor=kw_extractor)
+
+    docs = [
+        _make_document(raw_content=_make_long_content(200))
+        for _ in range(2)
+    ]
+
+    conn = await _make_in_memory_db()
+    try:
+        for doc in docs:
+            await _insert_test_document(conn, doc)
+
+        report = await pipeline.process_batch(conn, docs)
+        assert report.keywords_extracted == 0
+        assert report.failed_keywords == 2
+    finally:
+        await conn.close()
+
+
+@pytest.mark.asyncio
+async def test_process_batch_no_keyword_extractor_zero_counts() -> None:
+    """Without a keyword extractor, keywords_extracted and failed_keywords stay 0."""
+    pipeline = _make_pipeline(keyword_extractor=None)
+    docs = [
+        _make_document(raw_content=_make_long_content(200))
+        for _ in range(2)
+    ]
+
+    conn = await _make_in_memory_db()
+    try:
+        for doc in docs:
+            await _insert_test_document(conn, doc)
+
+        report = await pipeline.process_batch(conn, docs)
+        assert report.keywords_extracted == 0
+        assert report.failed_keywords == 0
+    finally:
+        await conn.close()
+
+
+def test_ingest_report_has_keywords_extracted_field() -> None:
+    """IngestReport includes keywords_extracted field defaulting to 0."""
+    from ai_craftsman_kb.ingestors.runner import IngestReport
+
+    report = IngestReport(source_type="hn")
+    assert report.keywords_extracted == 0
+
+    report2 = IngestReport(source_type="hn", keywords_extracted=5)
+    assert report2.keywords_extracted == 5

@@ -59,6 +59,7 @@ class IngestReport(BaseModel):
         skipped_old: Documents filtered out by incremental fetch (before last run).
         embedded: Documents successfully embedded into Qdrant.
         entities_extracted: Documents that had entity extraction run.
+        keywords_extracted: Documents that had keyword extraction run.
         errors: List of error message strings.
     """
 
@@ -70,6 +71,7 @@ class IngestReport(BaseModel):
     skipped_old: int = 0
     embedded: int = 0
     entities_extracted: int = 0
+    keywords_extracted: int = 0
     errors: list[str] = []
 
 
@@ -293,6 +295,7 @@ class IngestRunner:
                     )
                     report.embedded = processing_report.embedded
                     report.entities_extracted = processing_report.entity_extracted
+                    report.keywords_extracted = processing_report.keywords_extracted
                     if processing_report.errors:
                         report.errors.extend(processing_report.errors)
                 except Exception as e:
