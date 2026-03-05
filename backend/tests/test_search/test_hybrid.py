@@ -209,6 +209,28 @@ class TestReciprocalRankFusion:
         expected = 1.0 / (60 + 1)
         assert abs(result[0][1] - expected) < 1e-9
 
+    def test_three_lists(self) -> None:
+        """RRF with three lists correctly accumulates scores from all lists."""
+        list1 = [("doc_a", 1.0), ("doc_shared", 0.8)]
+        list2 = [("doc_b", 1.0), ("doc_shared", 0.7)]
+        list3 = [("doc_c", 1.0), ("doc_shared", 0.6)]
+        result = reciprocal_rank_fusion(
+            [list1, list2, list3],
+            weights=[0.4, 0.3, 0.3],
+            k=60,
+        )
+        scores = dict(result)
+        # doc_shared at rank 2 in all three: 0.4/62 + 0.3/62 + 0.3/62 = 1.0/62
+        expected_shared = 0.4 / 62 + 0.3 / 62 + 0.3 / 62
+        assert abs(scores["doc_shared"] - expected_shared) < 1e-9
+        # doc_a only in list1 at rank 1: 0.4/61
+        expected_a = 0.4 / 61
+        assert abs(scores["doc_a"] - expected_a) < 1e-9
+        # doc_shared should outscore any single-list doc
+        assert scores["doc_shared"] > scores["doc_a"]
+        assert scores["doc_shared"] > scores["doc_b"]
+        assert scores["doc_shared"] > scores["doc_c"]
+
     def test_mismatched_lengths_raises(self) -> None:
         """Passing lists and weights of different lengths raises ValueError."""
         with pytest.raises(ValueError, match="same length"):
@@ -701,6 +723,124 @@ class TestHybridSearchHybridMode:
             results = await hs.search(conn, "no results query", mode="hybrid")
 
         assert results == []
+        await conn.close()
+
+
+class TestHybridSearchKeywordTags:
+    """Tests for three-way RRF merge with keyword tag search."""
+
+    @pytest.mark.asyncio
+    async def test_keyword_tags_disabled_by_default(self) -> None:
+        """When keyword_tags weight is 0.0, KeywordTagSearch is not called."""
+        conn = await _make_conn()
+        await _insert_doc(conn, "doc1", title="Python async", raw_content="asyncio tutorial")
+        config = _make_config()  # default keyword_tags weight = 0.0
+        vector_store = _mock_vector_store(results=[("doc1", 0.9)])
+        embedder = _mock_embedder()
+        hs = HybridSearch(config, vector_store, embedder)
+
+        with patch.object(
+            hs._keyword_search, "search", new_callable=AsyncMock,
+            return_value=[("doc1", 1.0)]
+        ), patch.object(
+            hs._keyword_tag_search, "search", new_callable=AsyncMock,
+        ) as mock_kts:
+            await hs.search(conn, "asyncio", mode="hybrid")
+            mock_kts.assert_not_called()
+        await conn.close()
+
+    @pytest.mark.asyncio
+    async def test_keyword_tags_enabled_calls_tag_search(self) -> None:
+        """When keyword_tags weight > 0, KeywordTagSearch.search is called."""
+        conn = await _make_conn()
+        await _insert_doc(conn, "doc1", title="Python async", raw_content="asyncio tutorial")
+        config = _make_config()
+        config.settings.search.hybrid_weight_keyword_tags = 0.2
+        vector_store = _mock_vector_store(results=[("doc1", 0.9)])
+        embedder = _mock_embedder()
+        hs = HybridSearch(config, vector_store, embedder)
+
+        with patch.object(
+            hs._keyword_search, "search", new_callable=AsyncMock,
+            return_value=[("doc1", 1.0)]
+        ), patch.object(
+            hs._keyword_tag_search, "search", new_callable=AsyncMock,
+            return_value=[("doc1", 1.0)]
+        ) as mock_kts:
+            await hs.search(conn, "asyncio", mode="hybrid")
+            mock_kts.assert_called_once()
+        await conn.close()
+
+    @pytest.mark.asyncio
+    async def test_three_way_rrf_merge(self) -> None:
+        """Three-way RRF: doc appearing in all three lists ranks highest."""
+        conn = await _make_conn()
+        await _insert_doc(conn, "doc_all", title="In all three", raw_content="content a")
+        await _insert_doc(
+            conn, "doc_two", title="In two lists", raw_content="content b",
+            url="https://example.com/two",
+        )
+        await _insert_doc(
+            conn, "doc_one", title="In one list", raw_content="content c",
+            url="https://example.com/one",
+        )
+
+        config = _make_config(semantic_weight=0.4, keyword_weight=0.3)
+        config.settings.search.hybrid_weight_keyword_tags = 0.3
+        vector_store = _mock_vector_store(
+            results=[("doc_all", 0.9), ("doc_two", 0.8)]
+        )
+        embedder = _mock_embedder()
+        hs = HybridSearch(config, vector_store, embedder)
+
+        with patch.object(
+            hs._keyword_search, "search", new_callable=AsyncMock,
+            return_value=[("doc_all", 1.0), ("doc_two", 0.8)]
+        ), patch.object(
+            hs._keyword_tag_search, "search", new_callable=AsyncMock,
+            return_value=[("doc_all", 1.0), ("doc_one", 0.7)]
+        ):
+            results = await hs.search(conn, "query", mode="hybrid")
+
+        doc_ids = [r.document_id for r in results]
+        # doc_all appears in all 3 lists, should be first
+        assert doc_ids[0] == "doc_all"
+        await conn.close()
+
+    @pytest.mark.asyncio
+    async def test_keyword_tags_not_used_in_keyword_mode(self) -> None:
+        """Keyword-only mode does not invoke keyword tag search even if weight > 0."""
+        conn = await _make_conn()
+        await _insert_doc(conn, "doc1", title="Python async", raw_content="asyncio tutorial")
+        config = _make_config()
+        config.settings.search.hybrid_weight_keyword_tags = 0.3
+        vector_store = _mock_vector_store()
+        embedder = _mock_embedder()
+        hs = HybridSearch(config, vector_store, embedder)
+
+        with patch.object(
+            hs._keyword_tag_search, "search", new_callable=AsyncMock,
+        ) as mock_kts:
+            await hs.search(conn, "asyncio", mode="keyword")
+            mock_kts.assert_not_called()
+        await conn.close()
+
+    @pytest.mark.asyncio
+    async def test_keyword_tags_not_used_in_semantic_mode(self) -> None:
+        """Semantic-only mode does not invoke keyword tag search even if weight > 0."""
+        conn = await _make_conn()
+        await _insert_doc(conn, "doc1", title="Test", raw_content="content")
+        config = _make_config()
+        config.settings.search.hybrid_weight_keyword_tags = 0.3
+        vector_store = _mock_vector_store(results=[("doc1", 0.9)])
+        embedder = _mock_embedder()
+        hs = HybridSearch(config, vector_store, embedder)
+
+        with patch.object(
+            hs._keyword_tag_search, "search", new_callable=AsyncMock,
+        ) as mock_kts:
+            await hs.search(conn, "query", mode="semantic")
+            mock_kts.assert_not_called()
         await conn.close()
 
 

@@ -170,11 +170,18 @@ class ServerConfig(BaseModel):
 
 
 class SearchConfig(BaseModel):
-    """Hybrid search weighting and default result limits."""
+    """Hybrid search weighting and default result limits.
+
+    When ``hybrid_weight_keyword_tags`` is greater than 0, a third ranked list
+    from :class:`~ai_craftsman_kb.search.keyword_tag_search.KeywordTagSearch`
+    is included in the Reciprocal Rank Fusion merge during hybrid search.
+    Set to 0.0 (the default) to disable keyword-tag search entirely.
+    """
 
     default_limit: int = 20
     hybrid_weight_semantic: float = 0.6
     hybrid_weight_keyword: float = 0.4
+    hybrid_weight_keyword_tags: float = 0.0
 
 
 class SettingsConfig(BaseModel):

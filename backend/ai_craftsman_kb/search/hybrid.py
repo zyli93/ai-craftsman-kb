@@ -21,6 +21,7 @@ import aiosqlite
 from pydantic import BaseModel
 
 from .keyword import KeywordSearch
+from .keyword_tag_search import KeywordTagSearch
 
 if TYPE_CHECKING:
     from ..config.models import AppConfig
@@ -145,6 +146,7 @@ class HybridSearch:
         self._vector_store = vector_store
         self._embedder = embedder
         self._keyword_search = KeywordSearch()
+        self._keyword_tag_search = KeywordTagSearch()
 
     async def search(
         self,
@@ -185,6 +187,7 @@ class HybridSearch:
         search_cfg = self._config.settings.search
         semantic_weight = search_cfg.hybrid_weight_semantic
         keyword_weight = search_cfg.hybrid_weight_keyword
+        keyword_tags_weight = search_cfg.hybrid_weight_keyword_tags
 
         # Internal candidate pool size — fetch more to ensure good coverage
         candidate_limit = limit * 5
@@ -229,14 +232,34 @@ class HybridSearch:
                 since=since,
             )
 
-            vector_results, keyword_results = await asyncio.gather(
-                vector_task, keyword_task
-            )
+            tasks = [vector_task, keyword_task]
 
-            # Merge via RRF: [semantic, keyword] with configured weights
+            # Optionally include keyword tag search as a third ranked list
+            if keyword_tags_weight > 0:
+                keyword_tags_task = self._keyword_tag_search.search(
+                    conn,
+                    query,
+                    limit=candidate_limit,
+                )
+                tasks.append(keyword_tags_task)
+
+            gathered = await asyncio.gather(*tasks)
+
+            vector_results = gathered[0]
+            keyword_results = gathered[1]
+
+            ranked_lists = [vector_results, keyword_results]
+            weights = [semantic_weight, keyword_weight]
+
+            if keyword_tags_weight > 0:
+                keyword_tags_results = gathered[2]
+                ranked_lists.append(keyword_tags_results)
+                weights.append(keyword_tags_weight)
+
+            # Merge via RRF with configured weights
             merged = reciprocal_rank_fusion(
-                ranked_lists=[vector_results, keyword_results],
-                weights=[semantic_weight, keyword_weight],
+                ranked_lists=ranked_lists,
+                weights=weights,
             )
             ranked = merged[:limit]
 
