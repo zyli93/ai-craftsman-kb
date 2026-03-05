@@ -1,12 +1,13 @@
 """Embedding pipeline for AI Craftsman KB.
 
-Supports two providers:
+Supports three providers:
 - OpenAI ``text-embedding-3-small`` via direct httpx calls (not the openai SDK).
+- llama.cpp server with OpenAI-compatible ``/v1/embeddings`` endpoint.
 - Local sentence-transformers models (lazy-loaded, run in a thread executor).
 
 Provider selection is controlled by ``settings.embedding.provider`` in settings.yaml.
 Batch processing respects OpenAI's 2048-input limit. Token counting uses tiktoken
-for OpenAI models and the model's own tokenizer for local models.
+for OpenAI and llama.cpp models and the model's own tokenizer for local models.
 """
 from __future__ import annotations
 
@@ -33,6 +34,9 @@ _MODEL_DIMENSIONS: dict[str, int] = {
     "nomic-embed-text": 768,
     "all-MiniLM-L6-v2": 384,
     "all-mpnet-base-v2": 768,
+    "v5-small-retrieval-Q8_0.gguf": 1024,
+    "v5-small-retrieval-Q4_K_M.gguf": 1024,
+    "v5-small-retrieval-F16.gguf": 1024,
 }
 
 # OpenAI Embeddings API endpoint
@@ -126,6 +130,8 @@ class Embedder:
 
             if provider == "openai":
                 vectors = await self._embed_openai(batch)
+            elif provider == "llamacpp":
+                vectors = await self._embed_llamacpp(batch)
             elif provider == "local":
                 vectors = await asyncio.get_event_loop().run_in_executor(
                     None, self._embed_local, batch
@@ -133,7 +139,7 @@ class Embedder:
             else:
                 raise ValueError(
                     f"Unknown embedding provider: '{provider}'. "
-                    "Supported providers: openai, local."
+                    "Supported providers: openai, llamacpp, local."
                 )
 
             all_vectors.extend(vectors)
@@ -227,6 +233,37 @@ class Embedder:
             _call, operation_name=f"OpenAI embed [{model}]"
         )
 
+    async def _embed_llamacpp(self, texts: list[str]) -> list[list[float]]:
+        """Call a llama.cpp server's OpenAI-compatible embeddings endpoint.
+
+        The server must be running with ``--embedding`` mode enabled.
+        No API key is required — authentication is not used for local servers.
+
+        Args:
+            texts: Batch of texts to embed.
+
+        Returns:
+            List of embedding vectors in the same order as ``texts``.
+        """
+        providers_cfg = self.config.settings.providers
+        llamacpp_cfg = providers_cfg.get("llamacpp")
+        base_url = llamacpp_cfg.base_url if llamacpp_cfg else "http://localhost:9990"
+        url = f"{base_url}/v1/embeddings"
+        model = self.embedding_cfg.model
+
+        async def _call() -> list[list[float]]:
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                response = await client.post(
+                    url,
+                    json={"model": model, "input": texts},
+                )
+                response.raise_for_status()
+                data = response.json()
+                items = sorted(data["data"], key=lambda x: x["index"])
+                return [item["embedding"] for item in items]
+
+        return await with_retry(_call, operation_name=f"llama.cpp embed [{model}]")
+
     def _embed_local(self, texts: list[str]) -> list[list[float]]:
         """Embed texts using a local sentence-transformers model.
 
@@ -281,7 +318,7 @@ class Embedder:
         """
         provider = self.embedding_cfg.provider
 
-        if provider == "openai":
+        if provider in ("openai", "llamacpp"):
             if self._encoding is None:
                 self._encoding = tiktoken.get_encoding(_TIKTOKEN_ENCODING)
             return len(self._encoding.encode(text))

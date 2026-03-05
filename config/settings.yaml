@@ -1,8 +1,8 @@
 data_dir: ~/.ai-craftsman-kb/data
 
 embedding:
-  provider: openai
-  model: text-embedding-3-small
+  provider: llamacpp
+  model: v5-small-retrieval-Q8_0.gguf
   chunk_size: 2000
   chunk_overlap: 200
 
@@ -31,6 +31,8 @@ providers:
     api_key: ${FIREWORKS_API_KEY}
   ollama:
     base_url: http://localhost:11434
+  llamacpp:
+    base_url: http://localhost:9990
 
 youtube:
   api_key: ${YOUTUBE_API_KEY}

@@ -89,8 +89,8 @@ class TestLoadBundledConfig:
         """Bundled settings.yaml configures the embedding block correctly."""
         config = load_config()
         emb = config.settings.embedding
-        assert emb.provider == "openai"
-        assert emb.model == "text-embedding-3-small"
+        assert emb.provider == "llamacpp"
+        assert emb.model == "v5-small-retrieval-Q8_0.gguf"
         assert emb.chunk_size == 2000
 
     def test_server_ports(self) -> None:

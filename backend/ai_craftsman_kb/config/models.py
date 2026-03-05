@@ -105,6 +105,8 @@ class EmbeddingConfig(BaseModel):
                 "text-embedding-ada-002": 1536,
             }
             return openai_dims.get(self.model, 1536)
+        elif self.provider == "llamacpp":
+            return 1024  # Jina v5-text-small
         elif "nomic" in self.model:
             return 768
         else:
