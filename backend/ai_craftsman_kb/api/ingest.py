@@ -142,6 +142,6 @@ async def ingest_pro(
         report = await runner.run_source(ingestor)
         return [_report_to_out(report)]
     else:
-        # Run all sources
-        reports = await runner.run_all()
+        # Run all sources (skipped sources are not included in reports)
+        reports, _skipped = await runner.run_all()
         return [_report_to_out(r) for r in reports]

@@ -110,7 +110,7 @@ def _make_generator(
     if ingest_raises:
         ingest_runner.run_all = AsyncMock(side_effect=RuntimeError("ingest failed"))
     else:
-        ingest_runner.run_all = AsyncMock(return_value=[])
+        ingest_runner.run_all = AsyncMock(return_value=([], []))
 
     return BriefingGenerator(
         config=config,

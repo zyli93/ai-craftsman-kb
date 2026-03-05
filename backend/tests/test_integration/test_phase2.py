@@ -188,10 +188,11 @@ async def test_full_ingest_pipeline(
         patch.object(DevtoIngestor, "fetch_pro", new_callable=AsyncMock, return_value=[devto_doc]),
     ):
         runner = IngestRunner(full_config, mock_llm_router, db_path)
-        reports = await runner.run_all()
+        reports, skipped = await runner.run_all()
 
     # Verify one report per source type
     assert len(reports) == 7
+    assert skipped == []
     source_types_in_reports = {r.source_type for r in reports}
     assert source_types_in_reports == set(INGESTORS.keys())
 
@@ -501,9 +502,10 @@ async def test_failed_ingestor_continues_run_all(
         ),
     ):
         runner = IngestRunner(full_config, mock_llm_router, db_path)
-        reports = await runner.run_all()
+        reports, skipped = await runner.run_all()
 
     assert len(reports) == 7
+    assert skipped == []
 
     hn_report = next(r for r in reports if r.source_type == "hn")
     assert len(hn_report.errors) > 0
@@ -614,9 +616,10 @@ async def test_stats_after_phase2_ingest(
     with patches["hn"], patches["substack"], patches["rss"], patches["youtube"], \
          patches["reddit"], patches["arxiv"], patches["devto"]:
         runner = IngestRunner(full_config, mock_llm_router, db_path)
-        reports = await runner.run_all()
+        reports, skipped = await runner.run_all()
 
     # All 7 should succeed
+    assert skipped == []
     total_stored = sum(r.stored for r in reports)
     assert total_stored == 7
 

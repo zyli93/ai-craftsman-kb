@@ -1,3 +1,5 @@
+disabled: []
+
 substack:
   - slug: karpathy
     name: "Andrej Karpathy"

@@ -345,17 +345,27 @@ class IngestRunner:
         await upsert_source(conn, source_row)
         return source_id
 
-    async def run_all(self) -> list[IngestReport]:
-        """Run all enabled ingestors in sequence. Return one report per source.
+    async def run_all(self) -> tuple[list[IngestReport], list[str]]:
+        """Run all enabled ingestors in sequence. Return reports and skipped sources.
 
+        Sources listed in ``config.sources.disabled`` are skipped and logged.
         Ingestors are run sequentially rather than concurrently to avoid
         overloading SQLite with concurrent writes.
 
         Returns:
-            A list of IngestReport objects, one per registered source type.
+            A tuple of (reports, skipped) where *reports* is a list of
+            IngestReport objects (one per source that was actually run) and
+            *skipped* is a list of source type keys that were disabled.
         """
+        disabled = set(self.config.sources.disabled)
         reports: list[IngestReport] = []
+        skipped: list[str] = []
+
         for source_type, ingestor_cls in INGESTORS.items():
+            if source_type in disabled:
+                logger.info("Skipping disabled source: %s", source_type)
+                skipped.append(source_type)
+                continue
             try:
                 ingestor = ingestor_cls(self.config)
                 report = await self.run_source(ingestor)
@@ -366,7 +376,7 @@ class IngestRunner:
                     source_type=source_type,
                     errors=[f"init failed: {e}"],
                 ))
-        return reports
+        return reports, skipped
 
     async def ingest_url(
         self,

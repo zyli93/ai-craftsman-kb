@@ -265,7 +265,7 @@ def create_mcp_server(config: AppConfig) -> FastMCP:
             ingestor = ingestor_cls(_config)
             reports = [await runner.run_source(ingestor)]
         else:
-            reports = await runner.run_all()
+            reports, _skipped = await runner.run_all()
 
         total_fetched = sum(r.fetched for r in reports)
         total_stored = sum(r.stored for r in reports)
@@ -388,7 +388,7 @@ def create_mcp_server(config: AppConfig) -> FastMCP:
                     llm_router=_llm_router,
                     db_path=_db_path,
                 )
-                await runner.run_all()
+                await runner.run_all()  # return value unused for briefing pre-ingest
             except Exception as e:
                 logger.warning("Pro ingest for briefing failed: %s", e)
 

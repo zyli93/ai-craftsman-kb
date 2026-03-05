@@ -65,8 +65,14 @@ class DevtoConfig(BaseModel):
 
 
 class SourcesConfig(BaseModel):
-    """Top-level sources configuration — which feeds/channels/subreddits to ingest."""
+    """Top-level sources configuration — which feeds/channels/subreddits to ingest.
 
+    The ``disabled`` list contains source type keys (e.g. ``"hn"``, ``"reddit"``)
+    that should be skipped during bulk ingestion via ``run_all()``.  An empty list
+    (the default) means all configured sources are enabled.
+    """
+
+    disabled: list[str] = []
     substack: list[SubstackSource] = []
     youtube_channels: list[YoutubeChannelSource] = []
     subreddits: list[SubredditSource] = []

@@ -326,10 +326,11 @@ async def test_run_all_runs_hn(
         HackerNewsIngestor, "fetch_pro", new_callable=AsyncMock, return_value=docs
     ):
         runner = IngestRunner(minimal_config, mock_llm_router, db_path)
-        reports = await runner.run_all()
+        reports, skipped = await runner.run_all()
 
     # One report per registered ingestor (7 total: hn, arxiv, devto, reddit, rss, substack, youtube)
     assert len(reports) == 7
+    assert skipped == []
     hn_report = next(r for r in reports if r.source_type == "hn")
     assert hn_report.stored == 1
     assert hn_report.errors == []

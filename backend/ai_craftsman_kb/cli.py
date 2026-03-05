@@ -92,6 +92,11 @@ def ingest_pro(ctx: click.Context, source: str | None) -> None:
         runner = IngestRunner(config, llm_router, db_path)
 
         if source:
+            # Check if the requested source is disabled
+            if source in config.sources.disabled:
+                print_warning(f"Source '{source}' is disabled in sources.yaml")
+                return
+
             try:
                 ingestor = get_ingestor(source, config)
             except ValueError as e:
@@ -109,12 +114,18 @@ def ingest_pro(ctx: click.Context, source: str | None) -> None:
                     description=f"[green]Done {source}: {report.stored} stored",
                 )
             reports.append(report)
+            skipped_sources: list[str] = []
         else:
             from .ingestors.runner import INGESTORS
 
+            disabled = set(config.sources.disabled)
+            skipped_sources = []
             reports = []
             with make_ingest_progress() as progress:
                 for source_type, ingestor_cls in INGESTORS.items():
+                    if source_type in disabled:
+                        skipped_sources.append(source_type)
+                        continue
                     task_id = progress.add_task(f"Ingesting {source_type}...", total=None)
                     try:
                         ingestor = ingestor_cls(config)
@@ -133,6 +144,8 @@ def ingest_pro(ctx: click.Context, source: str | None) -> None:
                     )
                     reports.append(report)
 
+        if skipped_sources:
+            print_warning(f"Skipped disabled sources: {', '.join(skipped_sources)}")
         print_ingest_report(reports)
 
     asyncio.run(_run())
