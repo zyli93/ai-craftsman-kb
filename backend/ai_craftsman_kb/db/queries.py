@@ -134,15 +134,15 @@ async def upsert_document(conn: aiosqlite.Connection, doc: DocumentRow) -> str:
         INSERT OR REPLACE INTO documents (
             id, source_id, origin, source_type, url, title, author,
             published_at, fetched_at, content_type, raw_content, word_count,
-            metadata, is_embedded, is_entities_extracted, filter_score,
-            filter_passed, is_favorited, is_archived, user_tags, user_notes,
-            promoted_at, deleted_at
+            metadata, is_embedded, is_entities_extracted, is_keywords_extracted,
+            filter_score, filter_passed, is_favorited, is_archived, user_tags,
+            user_notes, promoted_at, deleted_at
         ) VALUES (
             :id, :source_id, :origin, :source_type, :url, :title, :author,
             :published_at, :fetched_at, :content_type, :raw_content, :word_count,
-            :metadata, :is_embedded, :is_entities_extracted, :filter_score,
-            :filter_passed, :is_favorited, :is_archived, :user_tags, :user_notes,
-            :promoted_at, :deleted_at
+            :metadata, :is_embedded, :is_entities_extracted, :is_keywords_extracted,
+            :filter_score, :filter_passed, :is_favorited, :is_archived, :user_tags,
+            :user_notes, :promoted_at, :deleted_at
         )
         """,
         d,
@@ -256,6 +256,7 @@ async def update_document_flags(
     doc_id: str,
     is_embedded: bool | None = None,
     is_entities_extracted: bool | None = None,
+    is_keywords_extracted: bool | None = None,
     filter_score: float | None = None,
     filter_passed: bool | None = None,
 ) -> None:
@@ -269,6 +270,7 @@ async def update_document_flags(
         doc_id: The document's UUID string.
         is_embedded: If provided, update the embedding status flag.
         is_entities_extracted: If provided, update the entity extraction flag.
+        is_keywords_extracted: If provided, update the keyword extraction flag.
         filter_score: If provided, update the content filter score.
         filter_passed: If provided, update the content filter decision.
     """
@@ -282,6 +284,10 @@ async def update_document_flags(
     if is_entities_extracted is not None:
         sets.append("is_entities_extracted = ?")
         params.append(is_entities_extracted)
+
+    if is_keywords_extracted is not None:
+        sets.append("is_keywords_extracted = ?")
+        params.append(is_keywords_extracted)
 
     if filter_score is not None:
         sets.append("filter_score = ?")

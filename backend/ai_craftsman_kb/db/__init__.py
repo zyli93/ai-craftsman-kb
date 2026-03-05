@@ -3,13 +3,21 @@
 Provides SQLite connection management, schema initialization, and
 async CRUD/FTS query helpers for all tables.
 """
-from .models import BriefingRow, DiscoveredSourceRow, DocumentRow, EntityRow, SourceRow
+from .models import (
+    BriefingRow,
+    DiscoveredSourceRow,
+    DocumentKeywordRow,
+    DocumentRow,
+    EntityRow,
+    SourceRow,
+)
 from .sqlite import get_db, init_db
 
 __all__ = [
     "get_db",
     "init_db",
     "DocumentRow",
+    "DocumentKeywordRow",
     "SourceRow",
     "EntityRow",
     "DiscoveredSourceRow",

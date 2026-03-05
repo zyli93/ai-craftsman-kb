@@ -15,6 +15,7 @@ import pytest_asyncio
 from ai_craftsman_kb.db.models import (
     BriefingRow,
     DiscoveredSourceRow,
+    DocumentKeywordRow,
     DocumentRow,
     EntityRow,
     SourceRow,
@@ -134,6 +135,7 @@ class TestInitDb:
             "documents",
             "entities",
             "document_entities",
+            "document_keywords",
             "discovered_sources",
             "briefings",
         }
@@ -150,6 +152,7 @@ class TestInitDb:
 
         assert "documents_fts" in table_names
         assert "entities_fts" in table_names
+        assert "keywords_fts" in table_names
 
     async def test_init_db_creates_indexes(self) -> None:
         """init_db creates performance indexes."""
@@ -804,6 +807,266 @@ class TestBriefings:
             briefings = await list_briefings(conn, limit=3)
 
         assert len(briefings) == 3
+
+
+# ---------------------------------------------------------------------------
+# Document keywords tests
+# ---------------------------------------------------------------------------
+
+
+class TestDocumentKeywords:
+    """Tests for the document_keywords table and keywords_fts virtual table."""
+
+    async def test_insert_document_keyword(self) -> None:
+        """Inserting a keyword into document_keywords succeeds."""
+        async with get_test_db() as conn:
+            doc = make_doc()
+            await upsert_document(conn, doc)
+
+            await conn.execute(
+                "INSERT INTO document_keywords (document_id, keyword) VALUES (?, ?)",
+                (doc.id, "python"),
+            )
+            await conn.commit()
+
+            async with conn.execute(
+                "SELECT keyword FROM document_keywords WHERE document_id = ?",
+                (doc.id,),
+            ) as cursor:
+                rows = await cursor.fetchall()
+
+        assert len(rows) == 1
+        assert rows[0][0] == "python"
+
+    async def test_unique_constraint_on_document_keyword(self) -> None:
+        """Inserting duplicate (document_id, keyword) raises IntegrityError."""
+        async with get_test_db() as conn:
+            doc = make_doc()
+            await upsert_document(conn, doc)
+
+            await conn.execute(
+                "INSERT INTO document_keywords (document_id, keyword) VALUES (?, ?)",
+                (doc.id, "python"),
+            )
+            await conn.commit()
+
+            with pytest.raises(Exception):  # aiosqlite.IntegrityError
+                await conn.execute(
+                    "INSERT INTO document_keywords (document_id, keyword) VALUES (?, ?)",
+                    (doc.id, "python"),
+                )
+
+    async def test_multiple_keywords_per_document(self) -> None:
+        """A document can have multiple distinct keywords."""
+        async with get_test_db() as conn:
+            doc = make_doc()
+            await upsert_document(conn, doc)
+
+            keywords = ["python", "machine-learning", "transformers"]
+            for kw in keywords:
+                await conn.execute(
+                    "INSERT INTO document_keywords (document_id, keyword) VALUES (?, ?)",
+                    (doc.id, kw),
+                )
+            await conn.commit()
+
+            async with conn.execute(
+                "SELECT keyword FROM document_keywords WHERE document_id = ? ORDER BY keyword",
+                (doc.id,),
+            ) as cursor:
+                rows = await cursor.fetchall()
+
+        assert [row[0] for row in rows] == sorted(keywords)
+
+    async def test_cascade_delete_removes_keywords(self) -> None:
+        """Deleting a document cascades to remove its keywords."""
+        async with get_test_db() as conn:
+            doc = make_doc()
+            await upsert_document(conn, doc)
+
+            await conn.execute(
+                "INSERT INTO document_keywords (document_id, keyword) VALUES (?, ?)",
+                (doc.id, "python"),
+            )
+            await conn.commit()
+
+            await conn.execute("DELETE FROM documents WHERE id = ?", (doc.id,))
+            await conn.commit()
+
+            async with conn.execute(
+                "SELECT COUNT(*) FROM document_keywords WHERE document_id = ?",
+                (doc.id,),
+            ) as cursor:
+                row = await cursor.fetchone()
+
+        assert row[0] == 0
+
+    async def test_keywords_fts_search(self) -> None:
+        """keywords_fts returns matching keywords via FTS5 MATCH."""
+        async with get_test_db() as conn:
+            doc = make_doc()
+            await upsert_document(conn, doc)
+
+            await conn.execute(
+                "INSERT INTO document_keywords (document_id, keyword) VALUES (?, ?)",
+                (doc.id, "machine-learning"),
+            )
+            await conn.execute(
+                "INSERT INTO document_keywords (document_id, keyword) VALUES (?, ?)",
+                (doc.id, "deep-learning"),
+            )
+            await conn.commit()
+
+            async with conn.execute(
+                """
+                SELECT dk.document_id, dk.keyword
+                FROM keywords_fts
+                JOIN document_keywords dk ON dk.rowid = keywords_fts.rowid
+                WHERE keywords_fts MATCH ?
+                """,
+                ("learning",),
+            ) as cursor:
+                rows = await cursor.fetchall()
+
+        assert len(rows) == 2
+        keywords = {row[1] for row in rows}
+        assert "machine-learning" in keywords
+        assert "deep-learning" in keywords
+
+    async def test_keywords_fts_no_results(self) -> None:
+        """keywords_fts returns empty when no keywords match."""
+        async with get_test_db() as conn:
+            doc = make_doc()
+            await upsert_document(conn, doc)
+
+            await conn.execute(
+                "INSERT INTO document_keywords (document_id, keyword) VALUES (?, ?)",
+                (doc.id, "python"),
+            )
+            await conn.commit()
+
+            async with conn.execute(
+                """
+                SELECT dk.document_id
+                FROM keywords_fts
+                JOIN document_keywords dk ON dk.rowid = keywords_fts.rowid
+                WHERE keywords_fts MATCH ?
+                """,
+                ("zzznomatchzzz",),
+            ) as cursor:
+                rows = await cursor.fetchall()
+
+        assert rows == []
+
+    async def test_is_keywords_extracted_default_false(self) -> None:
+        """New documents have is_keywords_extracted=False by default."""
+        async with get_test_db() as conn:
+            doc = make_doc()
+            await upsert_document(conn, doc)
+            fetched = await get_document(conn, doc.id)
+
+        assert fetched is not None
+        assert fetched.is_keywords_extracted is False
+
+    async def test_update_is_keywords_extracted_flag(self) -> None:
+        """update_document_flags can set is_keywords_extracted."""
+        async with get_test_db() as conn:
+            doc = make_doc()
+            await upsert_document(conn, doc)
+
+            await update_document_flags(conn, doc.id, is_keywords_extracted=True)
+
+            fetched = await get_document(conn, doc.id)
+
+        assert fetched is not None
+        assert fetched.is_keywords_extracted is True
+
+    async def test_document_keyword_row_model(self) -> None:
+        """DocumentKeywordRow model can be constructed and used."""
+        row = DocumentKeywordRow(document_id="doc-123", keyword="python")
+        assert row.document_id == "doc-123"
+        assert row.keyword == "python"
+
+
+class TestKeywordsMigration:
+    """Tests for ALTER TABLE migration of existing databases."""
+
+    async def test_migration_adds_is_keywords_extracted(self) -> None:
+        """Migration adds is_keywords_extracted to an existing DB lacking it."""
+        from ai_craftsman_kb.db.sqlite import _migrate_existing_db
+
+        async with aiosqlite.connect(":memory:") as conn:
+            conn.row_factory = aiosqlite.Row
+            await conn.execute("PRAGMA foreign_keys=ON")
+
+            # Create documents table WITHOUT is_keywords_extracted
+            await conn.execute("""
+                CREATE TABLE documents (
+                    id TEXT PRIMARY KEY,
+                    source_id TEXT,
+                    origin TEXT NOT NULL,
+                    source_type TEXT NOT NULL,
+                    url TEXT UNIQUE NOT NULL,
+                    title TEXT,
+                    author TEXT,
+                    published_at TIMESTAMP,
+                    fetched_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    content_type TEXT,
+                    raw_content TEXT,
+                    word_count INTEGER,
+                    metadata JSON,
+                    is_embedded BOOLEAN DEFAULT FALSE,
+                    is_entities_extracted BOOLEAN DEFAULT FALSE,
+                    filter_score REAL,
+                    filter_passed BOOLEAN,
+                    is_favorited BOOLEAN DEFAULT FALSE,
+                    is_archived BOOLEAN DEFAULT FALSE,
+                    user_tags JSON DEFAULT '[]',
+                    user_notes TEXT,
+                    promoted_at TIMESTAMP,
+                    deleted_at TIMESTAMP
+                )
+            """)
+            await conn.execute(
+                "CREATE INDEX idx_documents_processing "
+                "ON documents(is_embedded, is_entities_extracted)"
+            )
+            await conn.commit()
+
+            # Run migration
+            await _migrate_existing_db(conn)
+
+            # Verify column was added
+            async with conn.execute("PRAGMA table_info(documents)") as cursor:
+                columns = {row[1] for row in await cursor.fetchall()}
+
+            assert "is_keywords_extracted" in columns
+
+    async def test_migration_is_idempotent(self) -> None:
+        """Running migration twice does not raise an error."""
+        from ai_craftsman_kb.db.sqlite import _migrate_existing_db
+
+        async with aiosqlite.connect(":memory:") as conn:
+            conn.row_factory = aiosqlite.Row
+            await conn.execute("PRAGMA foreign_keys=ON")
+
+            # Create a minimal documents table with the column already present
+            await conn.execute("""
+                CREATE TABLE documents (
+                    id TEXT PRIMARY KEY,
+                    origin TEXT NOT NULL,
+                    source_type TEXT NOT NULL,
+                    url TEXT UNIQUE NOT NULL,
+                    is_embedded BOOLEAN DEFAULT FALSE,
+                    is_entities_extracted BOOLEAN DEFAULT FALSE,
+                    is_keywords_extracted BOOLEAN DEFAULT FALSE
+                )
+            """)
+            await conn.commit()
+
+            # Running twice should be safe
+            await _migrate_existing_db(conn)
+            await _migrate_existing_db(conn)
 
 
 # ---------------------------------------------------------------------------

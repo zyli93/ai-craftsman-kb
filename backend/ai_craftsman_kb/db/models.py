@@ -37,6 +37,7 @@ class DocumentRow(BaseModel):
     metadata: dict = Field(default_factory=dict)
     is_embedded: bool = False
     is_entities_extracted: bool = False
+    is_keywords_extracted: bool = False
     filter_score: float | None = None
     filter_passed: bool | None = None
     is_favorited: bool = False
@@ -82,6 +83,18 @@ class EntityRow(BaseModel):
     first_seen_at: str | None = None
     mention_count: int = 1
     metadata: dict = Field(default_factory=dict)
+
+
+class DocumentKeywordRow(BaseModel):
+    """Maps to the document_keywords table.
+
+    Represents a keyword extracted from a document. Keywords are normalized
+    (lowercase, stripped) and deduplicated per document via the UNIQUE constraint
+    on (document_id, keyword).
+    """
+
+    document_id: str
+    keyword: str
 
 
 class DiscoveredSourceRow(BaseModel):
