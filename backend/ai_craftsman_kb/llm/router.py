@@ -3,12 +3,14 @@ import logging
 import time
 from typing import TYPE_CHECKING
 
+from ..config.models import LLMGatewayConfig
 from .anthropic_provider import AnthropicProvider
 from .base import CompletionResult, LLMProvider
+from .gateway import EndpointPool, ManagedEndpoint
 from .ollama_provider import OllamaProvider
 from .openai_provider import OpenAIProvider
 from .openrouter_provider import OpenRouterProvider
-from .rate_limiter import AsyncRateLimiter
+from .rate_limiter import AsyncRateLimiter, DailyLimitExceeded
 from .retry import with_retry
 from .usage_tracker import UsageTracker
 
@@ -54,6 +56,12 @@ class LLMRouter:
         self._embedding_provider: LLMProvider | None = None
         # Lazy cache of rate limiters keyed by task name
         self._rate_limiters: dict[str, AsyncRateLimiter] = {}
+
+        # Gateway mode: pools keyed by task name
+        self._gateway_mode = isinstance(config.settings.llm, LLMGatewayConfig)
+        self._task_pools: dict[str, EndpointPool] = {}
+        if self._gateway_mode:
+            self._build_gateway()
 
     def _build_provider(self, provider_name: str, model: str) -> LLMProvider:
         """Instantiate a provider by name using configuration from AppConfig.
@@ -114,9 +122,34 @@ class LLMRouter:
                 base_url="https://api.fireworks.ai/inference/v1",
             )
 
+        if provider_name == "groq":
+            if not api_key:
+                raise ValueError(
+                    "Groq API key not configured. "
+                    "Set GROQ_API_KEY or add it to config/settings.yaml."
+                )
+            return OpenAIProvider(
+                api_key=api_key,
+                model=model,
+                base_url="https://api.groq.com/openai/v1",
+            )
+
+        if provider_name == "cerebras":
+            if not api_key:
+                raise ValueError(
+                    "Cerebras API key not configured. "
+                    "Set CEREBRAS_API_KEY or add it to config/settings.yaml."
+                )
+            return OpenAIProvider(
+                api_key=api_key,
+                model=model,
+                base_url="https://api.cerebras.ai/v1",
+            )
+
         raise ValueError(
             f"Unknown LLM provider: '{provider_name}'. "
-            f"Supported providers: openai, openrouter, anthropic, ollama, fireworks."
+            f"Supported providers: openai, openrouter, anthropic, ollama, "
+            f"fireworks, groq, cerebras."
         )
 
     def _get_task_provider(self, task: str) -> LLMProvider:
@@ -154,19 +187,52 @@ class LLMRouter:
             )
         return self._embedding_provider
 
-    def _get_rate_limiter(self, task: str, rpm: float) -> AsyncRateLimiter:
+    def _get_rate_limiter(self, task: str, rpm: float, daily_limit: int | None = None) -> AsyncRateLimiter:
         """Get or create a cached rate limiter for a task.
 
         Args:
             task: Task name used as the cache key.
             rpm: Requests per minute for the limiter.
+            daily_limit: Maximum requests per day. None = unlimited.
 
         Returns:
             An AsyncRateLimiter instance.
         """
         if task not in self._rate_limiters:
-            self._rate_limiters[task] = AsyncRateLimiter(rpm=rpm)
+            self._rate_limiters[task] = AsyncRateLimiter(rpm=rpm, daily_limit=daily_limit)
         return self._rate_limiters[task]
+
+    def _build_gateway(self) -> None:
+        """Build managed endpoints and pools from LLMGatewayConfig."""
+        gw_cfg: LLMGatewayConfig = self._config.settings.llm  # type: ignore[assignment]
+
+        # Create one ManagedEndpoint per endpoint config (shared across pools)
+        managed: dict[str, ManagedEndpoint] = {}
+        for ep_name, ep_cfg in gw_cfg.endpoints.items():
+            rpm = ep_cfg.rate_limit or 60.0
+            limiter = AsyncRateLimiter(rpm=rpm, daily_limit=ep_cfg.daily_limit)
+            provider = self._build_provider(ep_cfg.provider, ep_cfg.model)
+            managed[ep_name] = ManagedEndpoint(
+                name=ep_name,
+                provider_name=ep_cfg.provider,
+                model=ep_cfg.model,
+                provider=provider,
+                rate_limiter=limiter,
+            )
+
+        # Create pools
+        pools: dict[str, EndpointPool] = {}
+        for pool_name, pool_cfg in gw_cfg.pools.items():
+            eps = [managed[ep_name] for ep_name in pool_cfg.endpoints]
+            pools[pool_name] = EndpointPool(
+                name=pool_name,
+                endpoints=eps,
+                max_retries=pool_cfg.max_retries,
+            )
+
+        # Map task names to pools
+        for task_name, pool_name in gw_cfg.tasks.items():
+            self._task_pools[task_name] = pools[pool_name]
 
     async def complete(
         self,
@@ -196,6 +262,9 @@ class LLMRouter:
             ValueError: If the task name is not recognised.
             Exception: Re-raises provider errors after logging.
         """
+        if self._gateway_mode:
+            return await self._complete_gateway(task, prompt, system, **kwargs)
+
         if task not in TASK_NAMES:
             raise ValueError(
                 f"Unknown task: '{task}'. Must be one of {TASK_NAMES}."
@@ -207,8 +276,9 @@ class LLMRouter:
         task_cfg = getattr(self._config.settings.llm, task)
 
         # Apply rate limiting if configured
-        if task_cfg.rate_limit is not None:
-            limiter = self._get_rate_limiter(task, task_cfg.rate_limit)
+        if task_cfg.rate_limit is not None or task_cfg.daily_limit is not None:
+            rpm = task_cfg.rate_limit or 60.0  # default 60 RPM if only daily_limit set
+            limiter = self._get_rate_limiter(task, rpm, task_cfg.daily_limit)
             await limiter.acquire()
 
         t0 = time.monotonic()
@@ -236,6 +306,50 @@ class LLMRouter:
             await self._usage_tracker.record(
                 provider=task_cfg.provider,
                 model=task_cfg.model,
+                task=task,
+                input_tokens=result.input_tokens,
+                output_tokens=result.output_tokens,
+                duration_ms=duration_ms,
+                success=True,
+            )
+
+        return result
+
+    async def _complete_gateway(
+        self,
+        task: str,
+        prompt: str,
+        system: str = "",
+        **kwargs: object,
+    ) -> CompletionResult:
+        """Gateway-mode completion: delegate to the task's endpoint pool."""
+        pool = self._task_pools.get(task)
+        if pool is None:
+            raise ValueError(
+                f"Unknown task: '{task}'. Not configured in llm.tasks."
+            )
+
+        t0 = time.monotonic()
+        try:
+            result, ep = await pool.complete(prompt=prompt, system=system, **kwargs)
+        except Exception:
+            duration_ms = int((time.monotonic() - t0) * 1000)
+            logger.exception("LLM gateway completion failed for task '%s'", task)
+            if self._usage_tracker is not None:
+                await self._usage_tracker.record(
+                    provider="gateway",
+                    model="unknown",
+                    task=task,
+                    duration_ms=duration_ms,
+                    success=False,
+                )
+            raise
+
+        duration_ms = int((time.monotonic() - t0) * 1000)
+        if self._usage_tracker is not None:
+            await self._usage_tracker.record(
+                provider=ep.provider_name,
+                model=ep.model,
                 task=task,
                 input_tokens=result.input_tokens,
                 output_tokens=result.output_tokens,

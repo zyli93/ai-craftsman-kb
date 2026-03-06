@@ -4,9 +4,9 @@ All configuration is structured as immutable Pydantic models validated at
 load time. AppConfig is the top-level container consumed throughout the app.
 """
 
-from typing import Literal
+from typing import Any, Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 
 
 # ---------------------------------------------------------------------------
@@ -130,6 +130,7 @@ class LLMTaskConfig(BaseModel):
     provider: str
     model: str
     rate_limit: float | None = None  # max requests per minute; None = unlimited
+    daily_limit: int | None = None  # max requests per day; None = unlimited
     max_retries: int = 3  # default matches current behavior
 
 
@@ -141,6 +142,30 @@ class LLMRoutingConfig(BaseModel):
     briefing: LLMTaskConfig
     source_discovery: LLMTaskConfig
     keyword_extraction: LLMTaskConfig
+
+
+class EndpointConfig(BaseModel):
+    """A single LLM endpoint with provider, model, and optional rate limits."""
+
+    provider: str
+    model: str
+    rate_limit: float | None = None  # RPM; None = unlimited
+    daily_limit: int | None = None  # requests per day; None = unlimited
+
+
+class PoolConfig(BaseModel):
+    """A pool of interchangeable endpoints with failover."""
+
+    endpoints: list[str]  # references EndpointConfig keys
+    max_retries: int = 3
+
+
+class LLMGatewayConfig(BaseModel):
+    """Multi-provider LLM gateway with endpoint pools and automatic failover."""
+
+    endpoints: dict[str, EndpointConfig]
+    pools: dict[str, PoolConfig]
+    tasks: dict[str, str]  # task_name → pool_name
 
 
 class ProviderConfig(BaseModel):
@@ -191,12 +216,31 @@ class SettingsConfig(BaseModel):
 
     data_dir: str = "./data"
     embedding: EmbeddingConfig = EmbeddingConfig()
-    llm: LLMRoutingConfig | None = None
+    llm: LLMGatewayConfig | LLMRoutingConfig | None = None
     providers: dict[str, ProviderConfig] = {}
     youtube: YoutubeAPIConfig = YoutubeAPIConfig()
     reddit: RedditAPIConfig = RedditAPIConfig()
     server: ServerConfig = ServerConfig()
     search: SearchConfig = SearchConfig()
+
+    @model_validator(mode="before")
+    @classmethod
+    def _detect_llm_format(cls, data: Any) -> Any:
+        """Disambiguate between gateway and legacy LLM config formats.
+
+        Presence of ``endpoints`` key → LLMGatewayConfig.
+        Presence of ``filtering`` key → LLMRoutingConfig.
+        """
+        if not isinstance(data, dict):
+            return data
+        llm = data.get("llm")
+        if not isinstance(llm, dict):
+            return data
+        if "endpoints" in llm:
+            data["llm"] = LLMGatewayConfig(**llm)
+        elif "filtering" in llm:
+            data["llm"] = LLMRoutingConfig(**llm)
+        return data
 
 
 # ---------------------------------------------------------------------------

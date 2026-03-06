@@ -78,14 +78,16 @@ class TestLoadBundledConfig:
         assert sources.devto is not None
 
     def test_settings_llm_routing_present(self) -> None:
-        """Bundled settings.yaml includes all five LLM task routes."""
+        """Bundled settings.yaml includes all five LLM tasks in gateway config."""
+        from ai_craftsman_kb.config.models import LLMGatewayConfig
+
         config = load_config()
         llm = config.settings.llm
-        assert llm.filtering.provider == "openrouter"
-        assert llm.briefing.provider == "anthropic"
-        assert llm.entity_extraction.provider == "openrouter"
-        assert llm.source_discovery.provider == "openrouter"
-        assert llm.keyword_extraction.provider == "openrouter"
+        assert isinstance(llm, LLMGatewayConfig)
+        expected_tasks = {"filtering", "entity_extraction", "briefing", "source_discovery", "keyword_extraction"}
+        assert set(llm.tasks.keys()) == expected_tasks
+        assert len(llm.endpoints) >= 1
+        assert len(llm.pools) >= 1
 
     def test_embedding_defaults(self) -> None:
         """Bundled settings.yaml configures the embedding block correctly."""

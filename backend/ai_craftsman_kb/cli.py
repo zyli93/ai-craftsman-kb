@@ -24,7 +24,7 @@ from .cli_output import (
     print_warning,
 )
 from .config import load_config
-from .config.models import AppConfig
+from .config.models import AppConfig, LLMGatewayConfig
 
 logger = logging.getLogger(__name__)
 
@@ -696,6 +696,11 @@ async def _check_llm_config(config: AppConfig) -> tuple[str, str]:
     if config.settings.llm is None:
         return ("error", "llm section missing from settings.yaml — ingest and search commands will not work")
     tasks = ["filtering", "entity_extraction", "briefing", "source_discovery", "keyword_extraction"]
+    if isinstance(config.settings.llm, LLMGatewayConfig):
+        configured = [t for t in tasks if t in config.settings.llm.tasks]
+        pools = len(config.settings.llm.pools)
+        eps = len(config.settings.llm.endpoints)
+        return ("ok", f"{len(configured)}/{len(tasks)} tasks configured (gateway: {eps} endpoints, {pools} pools)")
     configured = [t for t in tasks if getattr(config.settings.llm, t, None) is not None]
     return ("ok", f"{len(configured)}/{len(tasks)} tasks configured")
 
@@ -865,6 +870,11 @@ async def _check_keyword_extraction_config(config: AppConfig) -> tuple[str, str]
     """
     if config.settings.llm is None:
         return ("warn", "llm section missing — keyword extraction unavailable")
+    if isinstance(config.settings.llm, LLMGatewayConfig):
+        if "keyword_extraction" in config.settings.llm.tasks:
+            pool_name = config.settings.llm.tasks["keyword_extraction"]
+            return ("ok", f"pool={pool_name} (gateway mode)")
+        return ("warn", "keyword_extraction not configured in llm.tasks")
     ke = config.settings.llm.keyword_extraction
     if ke is None:
         return ("warn", "keyword_extraction not configured in llm section of settings.yaml")

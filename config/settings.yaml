@@ -7,26 +7,126 @@ embedding:
   chunk_overlap: 200
 
 llm:
-  filtering:
-    provider: openrouter
-    model: meta-llama/llama-3.1-8b-instruct
-    # rate_limit: 60
-  entity_extraction:
-    provider: openrouter
-    model: meta-llama/llama-3.1-8b-instruct
-    # rate_limit: 60
-  briefing:
-    provider: anthropic
-    model: claude-sonnet-4-20250514
-    # rate_limit: 60
-  source_discovery:
-    provider: openrouter
-    model: meta-llama/llama-3.1-8b-instruct
-    # rate_limit: 60
-  keyword_extraction:
-    provider: openrouter
-    model: meta-llama/llama-3.1-8b-instruct
-    # rate_limit: 60
+  endpoints:
+    openrouter-llama70b:
+      provider: openrouter
+      model: meta-llama/llama-3.3-70b-instruct:free
+      rate_limit: 20
+      daily_limit: 1000
+
+    openrouter-gpt-oss-120b:
+      provider: openrouter
+      model: openai/gpt-oss-120b:free
+      rate_limit: 20
+      daily_limit: 1000
+
+    openrouter-gpt-oss-20b:
+      provider: openrouter
+      model: openai/gpt-oss-20b:free
+      rate_limit: 20
+      daily_limit: 1000
+
+    openrouter-step-flash:
+      provider: openrouter
+      model: stepfun/step-3.5-flash:free
+      rate_limit: 20
+      daily_limit: 1000
+
+    openrouter-glm-4-5-air:
+      provider: openrouter
+      model: z-ai/glm-4.5-air:free
+      rate_limit: 20
+      daily_limit: 1000
+
+    openrouter-qwen3-235b:
+      provider: openrouter
+      model: qwen/qwen3-235b-a22b-thinking-2507
+      rate_limit: 20
+      daily_limit: 1000
+
+    groq-llama70b:
+      provider: groq
+      model: llama-3.3-70b-versatile
+      rate_limit: 30
+      daily_limit: 1000
+
+    groq-gpt-oss-120b:
+      provider: groq
+      model: openai/gpt-oss-120b
+      rate_limit: 30
+      daily_limit: 1000
+
+    groq-gpt-oss-20b:
+      provider: groq
+      model: openai/gpt-oss-20b
+      rate_limit: 30
+      daily_limit: 1000
+
+    groq-qwen3-32b:
+      provider: groq
+      model: qwen/qwen3-32b
+      rate_limit: 60
+      daily_limit: 1000
+
+    cerebras-llama70b:
+      provider: cerebras
+      model: llama-3.3-70b
+      rate_limit: 30
+      daily_limit: 1000
+
+    cerebras-gpt-oss-120b:
+      provider: cerebras
+      model: gpt-oss-120b
+      rate_limit: 1000
+      daily_limit: 1440000
+
+    cerebras-qwen3-235b:
+      provider: cerebras
+      model: qwen-3-235b-a22b-instruct-2507
+      rate_limit: 250
+      daily_limit: 360000
+
+    cerebras-glm-4-7:
+      provider: cerebras
+      model: zai-glm-4.7
+      rate_limit: 500
+      daily_limit: 720000
+
+  pools:
+    gpt-oss-120b:
+      endpoints: [cerebras-gpt-oss-120b, groq-gpt-oss-120b, openrouter-gpt-oss-120b]
+      max_retries: 3
+
+    gpt-oss-20b:
+      endpoints: [groq-gpt-oss-20b, openrouter-gpt-oss-20b]
+      max_retries: 3
+
+    llama-3.3-70b:
+      endpoints: [groq-llama70b, cerebras-llama70b, openrouter-llama70b]
+      max_retries: 3
+
+    qwen3-235b:
+      endpoints: [cerebras-qwen3-235b, openrouter-qwen3-235b]
+      max_retries: 3
+
+    qwen3-32b:
+      endpoints: [groq-qwen3-32b]
+      max_retries: 3
+
+    glm:
+      endpoints: [cerebras-glm-4-7, openrouter-glm-4-5-air]
+      max_retries: 3
+
+    step-3.5-flash:
+      endpoints: [openrouter-step-flash]
+      max_retries: 3
+
+  tasks:
+    filtering: gpt-oss-120b
+    entity_extraction: gpt-oss-120b
+    briefing: gpt-oss-120b
+    source_discovery: gpt-oss-120b
+    keyword_extraction: gpt-oss-120b
 
 providers:
   openai:
@@ -37,6 +137,10 @@ providers:
     api_key: ${ANTHROPIC_API_KEY}
   fireworks:
     api_key: ${FIREWORKS_API_KEY}
+  groq:
+    api_key: ${GROQ_API_KEY}
+  cerebras:
+    api_key: ${CEREBRAS_API_KEY}
   ollama:
     base_url: http://localhost:11434
   llamacpp:

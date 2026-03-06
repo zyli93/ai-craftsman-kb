@@ -12,11 +12,26 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 
-from ai_craftsman_kb.llm import AsyncRateLimiter, CompletionResult, LLMProvider, LLMRouter
+from ai_craftsman_kb.config.models import (
+    EndpointConfig,
+    LLMGatewayConfig,
+    PoolConfig,
+    SettingsConfig,
+)
+from ai_craftsman_kb.llm import (
+    AllEndpointsExhausted,
+    AsyncRateLimiter,
+    CompletionResult,
+    EndpointPool,
+    LLMProvider,
+    LLMRouter,
+)
 from ai_craftsman_kb.llm.anthropic_provider import AnthropicProvider
+from ai_craftsman_kb.llm.gateway import ManagedEndpoint
 from ai_craftsman_kb.llm.ollama_provider import OllamaProvider
 from ai_craftsman_kb.llm.openai_provider import OpenAIProvider
 from ai_craftsman_kb.llm.openrouter_provider import OpenRouterProvider
+from ai_craftsman_kb.llm.rate_limiter import DailyLimitExceeded
 from ai_craftsman_kb.llm.retry import _is_retryable_error, _parse_retry_after, with_retry
 
 
@@ -56,12 +71,14 @@ def _make_app_config(
         provider: str,
         model: str,
         rate_limit: float | None = None,
+        daily_limit: int | None = None,
         max_retries: int = 3,
     ) -> MagicMock:
         m = MagicMock()
         m.provider = provider
         m.model = model
         m.rate_limit = rate_limit
+        m.daily_limit = daily_limit
         m.max_retries = max_retries
         return m
 
@@ -1026,3 +1043,231 @@ async def test_router_embed_records_usage_on_failure() -> None:
     call_kwargs = tracker.record.call_args.kwargs
     assert call_kwargs["success"] is False
     assert call_kwargs["task"] == "embedding"
+
+
+# ---------------------------------------------------------------------------
+# Gateway / EndpointPool tests
+# ---------------------------------------------------------------------------
+
+
+def _make_managed_endpoint(
+    name: str,
+    daily_limit: int | None = None,
+    daily_count: int = 0,
+    rpm: float = 60.0,
+) -> ManagedEndpoint:
+    """Build a ManagedEndpoint with a mock provider."""
+    limiter = AsyncRateLimiter(rpm=rpm, daily_limit=daily_limit)
+    limiter._daily_count = daily_count
+    if daily_limit is not None:
+        # Ensure the day counter is active
+        import time
+        limiter._day_start = time.monotonic()
+    provider = AsyncMock(spec=LLMProvider)
+    provider.complete = AsyncMock(
+        return_value=CompletionResult(text=f"from-{name}", model=f"model-{name}")
+    )
+    return ManagedEndpoint(
+        name=name,
+        provider_name=f"provider-{name}",
+        model=f"model-{name}",
+        provider=provider,
+        rate_limiter=limiter,
+    )
+
+
+@pytest.mark.asyncio
+async def test_pool_selects_endpoint_with_most_remaining() -> None:
+    """EndpointPool picks the endpoint with the most daily quota remaining."""
+    ep_low = _make_managed_endpoint("low", daily_limit=100, daily_count=90)
+    ep_high = _make_managed_endpoint("high", daily_limit=100, daily_count=10)
+
+    pool = EndpointPool("test", [ep_low, ep_high])
+    result, selected = await pool.complete("hello")
+
+    assert selected.name == "high"
+    assert result.text == "from-high"
+
+
+@pytest.mark.asyncio
+async def test_pool_prefers_unlimited_endpoints() -> None:
+    """EndpointPool puts unlimited endpoints (daily_limit=None) first."""
+    ep_limited = _make_managed_endpoint("limited", daily_limit=100, daily_count=0)
+    ep_unlimited = _make_managed_endpoint("unlimited", daily_limit=None)
+
+    pool = EndpointPool("test", [ep_limited, ep_unlimited])
+    result, selected = await pool.complete("hello")
+
+    assert selected.name == "unlimited"
+
+
+@pytest.mark.asyncio
+async def test_pool_failover_on_daily_limit_exceeded() -> None:
+    """EndpointPool skips exhausted endpoints and falls through to the next."""
+    ep_exhausted = _make_managed_endpoint("exhausted", daily_limit=10, daily_count=10)
+    ep_available = _make_managed_endpoint("available", daily_limit=100, daily_count=0)
+
+    pool = EndpointPool("test", [ep_exhausted, ep_available])
+    result, selected = await pool.complete("hello")
+
+    assert selected.name == "available"
+    assert result.text == "from-available"
+
+
+@pytest.mark.asyncio
+async def test_pool_all_exhausted_raises() -> None:
+    """EndpointPool raises AllEndpointsExhausted when every endpoint is spent."""
+    ep1 = _make_managed_endpoint("a", daily_limit=10, daily_count=10)
+    ep2 = _make_managed_endpoint("b", daily_limit=10, daily_count=10)
+
+    pool = EndpointPool("test", [ep1, ep2])
+    with pytest.raises(AllEndpointsExhausted, match="All endpoints"):
+        await pool.complete("hello")
+
+
+@pytest.mark.asyncio
+async def test_pool_failover_on_provider_error() -> None:
+    """EndpointPool tries next endpoint when current one raises a non-retryable error."""
+    ep_broken = _make_managed_endpoint("broken", daily_limit=100, daily_count=0)
+    ep_broken.provider.complete = AsyncMock(side_effect=ValueError("broken provider"))
+    ep_ok = _make_managed_endpoint("ok", daily_limit=100, daily_count=50)
+
+    pool = EndpointPool("test", [ep_broken, ep_ok], max_retries=1)
+
+    with patch("ai_craftsman_kb.llm.retry.asyncio.sleep", new_callable=AsyncMock):
+        result, selected = await pool.complete("hello")
+
+    assert selected.name == "ok"
+
+
+# ---------------------------------------------------------------------------
+# Gateway config parsing tests
+# ---------------------------------------------------------------------------
+
+
+def test_settings_config_parses_gateway_format() -> None:
+    """SettingsConfig with 'endpoints' key parses as LLMGatewayConfig."""
+    data = {
+        "llm": {
+            "endpoints": {
+                "ep1": {"provider": "openrouter", "model": "test-model", "rate_limit": 20, "daily_limit": 100},
+            },
+            "pools": {
+                "pool1": {"endpoints": ["ep1"]},
+            },
+            "tasks": {
+                "filtering": "pool1",
+            },
+        }
+    }
+    cfg = SettingsConfig(**data)
+    assert isinstance(cfg.llm, LLMGatewayConfig)
+    assert "ep1" in cfg.llm.endpoints
+    assert cfg.llm.tasks["filtering"] == "pool1"
+
+
+def test_settings_config_parses_legacy_format() -> None:
+    """SettingsConfig with 'filtering' key parses as LLMRoutingConfig (legacy)."""
+    data = {
+        "llm": {
+            "filtering": {"provider": "openrouter", "model": "test"},
+            "entity_extraction": {"provider": "openrouter", "model": "test"},
+            "briefing": {"provider": "openrouter", "model": "test"},
+            "source_discovery": {"provider": "openrouter", "model": "test"},
+            "keyword_extraction": {"provider": "openrouter", "model": "test"},
+        }
+    }
+    cfg = SettingsConfig(**data)
+    from ai_craftsman_kb.config.models import LLMRoutingConfig
+    assert isinstance(cfg.llm, LLMRoutingConfig)
+
+
+# ---------------------------------------------------------------------------
+# Router gateway-mode tests
+# ---------------------------------------------------------------------------
+
+
+def _make_gateway_config(
+    *,
+    ep_keys: list[str] | None = None,
+) -> MagicMock:
+    """Build a minimal AppConfig mock with gateway LLM config."""
+    config = MagicMock()
+
+    def _provider_cfg(key: str | None, base_url: str | None = None) -> MagicMock:
+        m = MagicMock()
+        m.api_key = key
+        m.base_url = base_url
+        return m
+
+    config.settings.providers = {
+        "openrouter": _provider_cfg("or-test"),
+        "groq": _provider_cfg("groq-test"),
+        "cerebras": _provider_cfg("cerebras-test"),
+        "openai": _provider_cfg("sk-test"),
+    }
+
+    ep_keys = ep_keys or ["openrouter-llama70b", "groq-llama70b"]
+    endpoints = {}
+    if "openrouter-llama70b" in ep_keys:
+        endpoints["openrouter-llama70b"] = EndpointConfig(
+            provider="openrouter", model="llama-70b", rate_limit=20, daily_limit=100,
+        )
+    if "groq-llama70b" in ep_keys:
+        endpoints["groq-llama70b"] = EndpointConfig(
+            provider="groq", model="llama-70b", rate_limit=30, daily_limit=200,
+        )
+
+    gw = LLMGatewayConfig(
+        endpoints=endpoints,
+        pools={"free": PoolConfig(endpoints=list(endpoints.keys()), max_retries=2)},
+        tasks={"filtering": "free", "entity_extraction": "free", "briefing": "free",
+               "source_discovery": "free", "keyword_extraction": "free"},
+    )
+    config.settings.llm = gw
+
+    config.settings.embedding.provider = "openai"
+    config.settings.embedding.model = "text-embedding-3-small"
+
+    return config
+
+
+@pytest.mark.asyncio
+async def test_router_gateway_mode_routes_through_pool() -> None:
+    """Router in gateway mode delegates to EndpointPool."""
+    config = _make_gateway_config()
+    router = LLMRouter(config)
+
+    mock_result = CompletionResult(text="gateway-ok", model="llama-70b")
+
+    # Mock both OpenRouter and OpenAI (groq uses OpenAIProvider)
+    with (
+        patch.object(OpenRouterProvider, "complete", new_callable=AsyncMock, return_value=mock_result),
+        patch.object(OpenAIProvider, "complete", new_callable=AsyncMock, return_value=mock_result),
+    ):
+        result = await router.complete("filtering", prompt="test")
+
+    assert result.text == "gateway-ok"
+
+
+@pytest.mark.asyncio
+async def test_router_gateway_shared_rate_limiter() -> None:
+    """Gateway mode: two tasks using the same pool share endpoint rate limiters."""
+    config = _make_gateway_config(ep_keys=["openrouter-llama70b"])
+    router = LLMRouter(config)
+
+    # The pool for "filtering" and "entity_extraction" should share endpoints
+    pool_f = router._task_pools["filtering"]
+    pool_e = router._task_pools["entity_extraction"]
+    # Same pool object since they map to the same pool name
+    assert pool_f is pool_e
+
+
+@pytest.mark.asyncio
+async def test_router_gateway_unknown_task_raises() -> None:
+    """Router in gateway mode raises ValueError for unknown tasks."""
+    config = _make_gateway_config()
+    router = LLMRouter(config)
+
+    with pytest.raises(ValueError, match="Unknown task"):
+        await router.complete("nonexistent_task", prompt="test")
