@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Query, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 
 from .models import UsageRecordOut, UsageSummaryItem, UsageSummaryOut
 
@@ -35,8 +35,13 @@ async def get_usage_summary(
     now = datetime.now(timezone.utc)
 
     if since is not None:
-        # Parse the ISO timestamp, treating naive datetimes as UTC
-        period_start = datetime.fromisoformat(since)
+        try:
+            period_start = datetime.fromisoformat(since)
+        except ValueError:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid 'since' timestamp: '{since}'. Must be ISO 8601 format.",
+            )
         if period_start.tzinfo is None:
             period_start = period_start.replace(tzinfo=timezone.utc)
     else:
