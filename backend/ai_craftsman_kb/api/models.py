@@ -263,6 +263,71 @@ class BriefingOut(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Usage models
+# ---------------------------------------------------------------------------
+
+
+class UsageSummaryItem(BaseModel):
+    """A single row of aggregated LLM usage grouped by provider, model, and task.
+
+    Attributes:
+        provider: LLM provider name (e.g. 'openai', 'anthropic').
+        model: Model identifier used for requests.
+        task: Logical task name (e.g. 'filtering', 'briefing').
+        total_input_tokens: Sum of input/prompt tokens in the period.
+        total_output_tokens: Sum of output/completion tokens in the period.
+        request_count: Number of LLM requests in the period.
+    """
+
+    provider: str
+    model: str
+    task: str
+    total_input_tokens: int
+    total_output_tokens: int
+    request_count: int
+
+
+class UsageSummaryOut(BaseModel):
+    """Aggregated LLM usage summary for a given time period.
+
+    Attributes:
+        summary: List of usage rows grouped by provider+model+task.
+        period_start: ISO 8601 start of the query period.
+        period_end: ISO 8601 end of the query period (time of request).
+    """
+
+    summary: list[UsageSummaryItem]
+    period_start: str
+    period_end: str
+
+
+class UsageRecordOut(BaseModel):
+    """A single raw LLM usage record.
+
+    Attributes:
+        id: Auto-incremented row ID.
+        timestamp: ISO 8601 timestamp of the request.
+        provider: LLM provider name.
+        model: Model identifier.
+        task: Logical task name.
+        input_tokens: Number of input tokens, or None.
+        output_tokens: Number of output tokens, or None.
+        duration_ms: Request duration in milliseconds, or None.
+        success: Whether the request completed successfully.
+    """
+
+    id: int
+    timestamp: str
+    provider: str
+    model: str
+    task: str
+    input_tokens: int | None
+    output_tokens: int | None
+    duration_ms: int | None
+    success: bool
+
+
+# ---------------------------------------------------------------------------
 # Request bodies
 # ---------------------------------------------------------------------------
 

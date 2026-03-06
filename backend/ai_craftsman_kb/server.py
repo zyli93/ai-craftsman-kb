@@ -38,9 +38,11 @@ from .api.search import router as search_router
 from .api.sources import router as sources_router
 from .api.stats import router as stats_router
 from .api.system import router as system_router
+from .api.usage import router as usage_router
 from .config.loader import load_config
 from .db.sqlite import init_db
 from .llm.router import LLMRouter
+from .llm.usage_tracker import UsageTracker
 from .processing.embedder import Embedder
 from .search.vector_store import VectorStore
 
@@ -94,7 +96,16 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # Shared service instances — created once, reused across requests
     app.state.vector_store = VectorStore(config)
     app.state.embedder = Embedder(config)
-    app.state.llm_router = LLMRouter(config)
+    app.state.usage_tracker = UsageTracker(data_dir)
+
+    # Pass usage_tracker to LLMRouter if it accepts the parameter (added by AIKB-15)
+    import inspect
+
+    llm_router_params = inspect.signature(LLMRouter.__init__).parameters
+    if "usage_tracker" in llm_router_params:
+        app.state.llm_router = LLMRouter(config, usage_tracker=app.state.usage_tracker)
+    else:
+        app.state.llm_router = LLMRouter(config)
 
     logger.info("AI Craftsman KB API ready on port %d", config.settings.server.backend_port)
 
@@ -181,6 +192,7 @@ def create_app(serve_dashboard: bool = True) -> FastAPI:
     app.include_router(entities_router)
     app.include_router(radar_router)
     app.include_router(briefings_router)
+    app.include_router(usage_router)
 
     # Mount dashboard static files last — StaticFiles acts as a catch-all
     if serve_dashboard:
