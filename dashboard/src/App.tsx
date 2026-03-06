@@ -1,6 +1,13 @@
 import { lazy, Suspense } from 'react'
 import { BrowserRouter, Routes, Route } from 'react-router-dom'
+import { Loader2 } from 'lucide-react'
 import { Layout } from '@/components/layout/Layout'
+
+const PageLoader = (
+  <div className="flex items-center justify-center py-24">
+    <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+  </div>
+)
 
 const OverviewPage = lazy(() => import('@/pages/OverviewPage').then(m => ({ default: m.OverviewPage })))
 const SourcesPage = lazy(() => import('@/pages/SourcesPage').then(m => ({ default: m.SourcesPage })))
@@ -15,13 +22,13 @@ export default function App() {
     <BrowserRouter>
       <Routes>
         <Route path="/" element={<Layout />}>
-          <Route index element={<Suspense fallback={null}><OverviewPage /></Suspense>} />
-          <Route path="sources" element={<Suspense fallback={null}><SourcesPage /></Suspense>} />
-          <Route path="search" element={<Suspense fallback={null}><SearchPage /></Suspense>} />
-          <Route path="entities" element={<Suspense fallback={null}><EntitiesPage /></Suspense>} />
-          <Route path="documents" element={<Suspense fallback={null}><DocumentsPage /></Suspense>} />
-          <Route path="briefing" element={<Suspense fallback={null}><BriefingPage /></Suspense>} />
-          <Route path="usage" element={<Suspense fallback={null}><UsagePage /></Suspense>} />
+          <Route index element={<Suspense fallback={PageLoader}><OverviewPage /></Suspense>} />
+          <Route path="sources" element={<Suspense fallback={PageLoader}><SourcesPage /></Suspense>} />
+          <Route path="search" element={<Suspense fallback={PageLoader}><SearchPage /></Suspense>} />
+          <Route path="entities" element={<Suspense fallback={PageLoader}><EntitiesPage /></Suspense>} />
+          <Route path="documents" element={<Suspense fallback={PageLoader}><DocumentsPage /></Suspense>} />
+          <Route path="briefing" element={<Suspense fallback={PageLoader}><BriefingPage /></Suspense>} />
+          <Route path="usage" element={<Suspense fallback={PageLoader}><UsagePage /></Suspense>} />
         </Route>
       </Routes>
     </BrowserRouter>
