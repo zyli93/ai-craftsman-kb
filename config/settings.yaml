@@ -92,13 +92,17 @@ llm:
       rate_limit: 500
       daily_limit: 720000
 
+    ollama-gpt-oss-20b:
+      provider: ollama
+      model: gpt-oss-20b
+
   pools:
     gpt-oss-120b:
       endpoints: [cerebras-gpt-oss-120b, groq-gpt-oss-120b, openrouter-gpt-oss-120b]
       max_retries: 3
 
     gpt-oss-20b:
-      endpoints: [groq-gpt-oss-20b, openrouter-gpt-oss-20b]
+      endpoints: [groq-gpt-oss-20b, openrouter-gpt-oss-20b, ollama-gpt-oss-20b]
       max_retries: 3
 
     llama-3.3-70b:

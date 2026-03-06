@@ -51,15 +51,11 @@ class EndpointPool:
         self._max_retries = max_retries
 
     def _sorted_endpoints(self) -> list[ManagedEndpoint]:
-        """Sort endpoints by daily_remaining descending (unlimited first)."""
-
-        def _sort_key(ep: ManagedEndpoint) -> float:
-            remaining = ep.rate_limiter.daily_remaining
-            if remaining is None:
-                return float("inf")
-            return float(remaining)
-
-        return sorted(self._endpoints, key=_sort_key, reverse=True)
+        """Sort limited endpoints by daily_remaining descending, then unlimited in config order."""
+        limited = [ep for ep in self._endpoints if ep.rate_limiter.daily_remaining is not None]
+        unlimited = [ep for ep in self._endpoints if ep.rate_limiter.daily_remaining is None]
+        limited.sort(key=lambda ep: ep.rate_limiter.daily_remaining, reverse=True)  # type: ignore[arg-type]
+        return limited + unlimited
 
     async def complete(
         self,

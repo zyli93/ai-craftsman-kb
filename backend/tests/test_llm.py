@@ -1090,12 +1090,24 @@ async def test_pool_selects_endpoint_with_most_remaining() -> None:
 
 
 @pytest.mark.asyncio
-async def test_pool_prefers_unlimited_endpoints() -> None:
-    """EndpointPool puts unlimited endpoints (daily_limit=None) first."""
+async def test_pool_tries_limited_before_unlimited() -> None:
+    """EndpointPool tries limited endpoints (with quota) before unlimited ones."""
     ep_limited = _make_managed_endpoint("limited", daily_limit=100, daily_count=0)
     ep_unlimited = _make_managed_endpoint("unlimited", daily_limit=None)
 
     pool = EndpointPool("test", [ep_limited, ep_unlimited])
+    result, selected = await pool.complete("hello")
+
+    assert selected.name == "limited"
+
+
+@pytest.mark.asyncio
+async def test_pool_falls_back_to_unlimited_when_limited_exhausted() -> None:
+    """EndpointPool uses unlimited endpoint when all limited ones are exhausted."""
+    ep_exhausted = _make_managed_endpoint("exhausted", daily_limit=10, daily_count=10)
+    ep_unlimited = _make_managed_endpoint("unlimited", daily_limit=None)
+
+    pool = EndpointPool("test", [ep_exhausted, ep_unlimited])
     result, selected = await pool.complete("hello")
 
     assert selected.name == "unlimited"
