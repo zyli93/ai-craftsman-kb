@@ -129,6 +129,8 @@ class LLMTaskConfig(BaseModel):
 
     provider: str
     model: str
+    rate_limit: float | None = None  # max requests per minute; None = unlimited
+    max_retries: int = 3  # default matches current behavior
 
 
 class LLMRoutingConfig(BaseModel):

@@ -10,18 +10,23 @@ llm:
   filtering:
     provider: openrouter
     model: meta-llama/llama-3.1-8b-instruct
+    # rate_limit: 60
   entity_extraction:
     provider: openrouter
     model: meta-llama/llama-3.1-8b-instruct
+    # rate_limit: 60
   briefing:
     provider: anthropic
     model: claude-sonnet-4-20250514
+    # rate_limit: 60
   source_discovery:
     provider: openrouter
     model: meta-llama/llama-3.1-8b-instruct
+    # rate_limit: 60
   keyword_extraction:
     provider: openrouter
     model: meta-llama/llama-3.1-8b-instruct
+    # rate_limit: 60
 
 providers:
   openai:
