@@ -9,7 +9,7 @@
  *  - Offset-based "Load more" pagination
  *  - Bulk delete confirmation dialog
  */
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   FileText,
@@ -518,31 +518,32 @@ export function DocumentsPage() {
     staleTime: 30_000,
   })
 
-  // Merge newly fetched page into allDocs.
-  // When page resets to 0 (filter change), clear previous accumulation.
+  // Reset pagination and selection when filters change
   const prevFiltersRef = useRef({ sourceFilter, originFilter, showArchived })
-  const filtersChanged =
-    prevFiltersRef.current.sourceFilter !== sourceFilter ||
-    prevFiltersRef.current.originFilter !== originFilter ||
-    prevFiltersRef.current.showArchived !== showArchived
-
-  if (filtersChanged) {
-    prevFiltersRef.current = { sourceFilter, originFilter, showArchived }
-    if (allDocs.length > 0) {
+  useEffect(() => {
+    const prev = prevFiltersRef.current
+    if (
+      prev.sourceFilter !== sourceFilter ||
+      prev.originFilter !== originFilter ||
+      prev.showArchived !== showArchived
+    ) {
+      prevFiltersRef.current = { sourceFilter, originFilter, showArchived }
       setAllDocs([])
-    }
-    if (page !== 0) {
       setPage(0)
+      setSelected(new Set())
     }
-    setSelected(new Set())
-  } else if (pageDocs && !isFetching) {
-    // Append new docs if not already present (by id)
-    const existingIds = new Set(allDocs.map((d) => d.id))
-    const newDocs = pageDocs.filter((d) => !existingIds.has(d.id))
-    if (newDocs.length > 0) {
-      setAllDocs((prev) => [...prev, ...newDocs])
+  }, [sourceFilter, originFilter, showArchived])
+
+  // Merge newly fetched page into allDocs
+  useEffect(() => {
+    if (pageDocs && !isFetching) {
+      setAllDocs((prev) => {
+        const existingIds = new Set(prev.map((d) => d.id))
+        const newDocs = pageDocs.filter((d) => !existingIds.has(d.id))
+        return newDocs.length > 0 ? [...prev, ...newDocs] : prev
+      })
     }
-  }
+  }, [pageDocs, isFetching])
 
   const hasMore = pageDocs !== undefined && pageDocs.length === PAGE_SIZE
 
