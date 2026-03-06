@@ -20,6 +20,7 @@ from typing import Annotated, Any, Literal
 import aiosqlite
 from fastapi import APIRouter, Depends, Query, Request, Response
 
+from ..db.queries import get_document
 from ..search.hybrid import HybridSearch
 from .deps import get_conn
 from .documents import _doc_row_to_out
@@ -114,26 +115,30 @@ async def search_documents(
     )
 
     # Convert SearchResult objects to SearchResultOut response models.
-    # HybridSearch returns SearchResult which has document fields directly
-    # (not a DocumentRow). We reconstruct a DocumentOut from those fields.
+    # Look up actual document metadata from DB to avoid returning fabricated values.
     output: list[SearchResultOut] = []
     for result in results:
-        doc_out = DocumentOut(
-            id=result.document_id,
-            title=result.title,
-            url=result.url,
-            source_type=result.source_type,
-            origin=result.origin,
-            author=result.author,
-            published_at=result.published_at,
-            fetched_at="",  # not available from search result
-            word_count=None,
-            is_embedded=True,  # must be embedded to appear in search results
-            is_favorited=False,
-            is_archived=False,
-            user_tags=[],
-            excerpt=result.excerpt,
-        )
+        doc_row = await get_document(conn, result.document_id)
+        if doc_row is not None:
+            doc_out = _doc_row_to_out(doc_row)
+        else:
+            # Fallback if document was deleted between search and lookup
+            doc_out = DocumentOut(
+                id=result.document_id,
+                title=result.title,
+                url=result.url,
+                source_type=result.source_type,
+                origin=result.origin,
+                author=result.author,
+                published_at=result.published_at,
+                fetched_at="",
+                word_count=None,
+                is_embedded=True,
+                is_favorited=False,
+                is_archived=False,
+                user_tags=[],
+                excerpt=result.excerpt,
+            )
         output.append(
             SearchResultOut(
                 document=doc_out,
