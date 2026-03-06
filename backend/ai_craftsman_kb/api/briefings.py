@@ -214,6 +214,19 @@ async def create_briefing(
     Raises:
         HTTPException 500: If briefing generation fails.
     """
+    # Optionally run pro ingest first to get fresh content
+    if body.run_ingest:
+        try:
+            from ..ingestors.runner import IngestRunner
+
+            config = request.app.state.config
+            llm_router = request.app.state.llm_router
+            db_path = request.app.state.db_path
+            runner = IngestRunner(config=config, llm_router=llm_router, db_path=db_path)
+            await runner.run_all()
+        except Exception as e:
+            logger.warning("Pro ingest for briefing failed: %s", e)
+
     # Optionally run radar search first
     if body.run_radar:
         try:
