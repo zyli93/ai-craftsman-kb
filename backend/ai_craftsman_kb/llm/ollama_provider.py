@@ -3,8 +3,7 @@ import logging
 
 import httpx
 
-from .base import LLMProvider
-from .retry import with_retry
+from .base import CompletionResult, LLMProvider
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +33,9 @@ class OllamaProvider(LLMProvider):
             timeout=120.0,  # Local models can be slow on first token
         )
 
-    async def complete(self, prompt: str, system: str = "", **kwargs: object) -> str:
+    async def complete(
+        self, prompt: str, system: str = "", **kwargs: object
+    ) -> CompletionResult:
         """Call the Ollama /api/chat endpoint.
 
         Args:
@@ -43,7 +44,7 @@ class OllamaProvider(LLMProvider):
             **kwargs: Unused; included for interface compatibility.
 
         Returns:
-            The model's response text.
+            A CompletionResult with the response text and token usage.
 
         Raises:
             httpx.HTTPStatusError: On API errors.
@@ -53,20 +54,22 @@ class OllamaProvider(LLMProvider):
             messages.append({"role": "system", "content": system})
         messages.append({"role": "user", "content": prompt})
 
-        async def _call() -> str:
-            response = await self._client.post(
-                "/api/chat",
-                json={
-                    "model": self.model,
-                    "messages": messages,
-                    "stream": False,
-                },
-            )
-            response.raise_for_status()
-            return response.json()["message"]["content"]
-
-        return await with_retry(
-            _call, operation_name=f"Ollama complete [{self.model}]"
+        response = await self._client.post(
+            "/api/chat",
+            json={
+                "model": self.model,
+                "messages": messages,
+                "stream": False,
+            },
+        )
+        response.raise_for_status()
+        data = response.json()
+        text = data["message"]["content"]
+        return CompletionResult(
+            text=text,
+            input_tokens=data.get("prompt_eval_count"),
+            output_tokens=data.get("eval_count"),
+            model=self.model,
         )
 
     async def embed(self, texts: list[str]) -> list[list[float]]:
@@ -86,18 +89,11 @@ class OllamaProvider(LLMProvider):
         """
         embeddings: list[list[float]] = []
         for text in texts:
-            # Capture `text` in a default argument to avoid closure issues
-            async def _call(t: str = text) -> list[float]:
-                response = await self._client.post(
-                    "/api/embeddings",
-                    json={"model": self.model, "prompt": t},
-                )
-                response.raise_for_status()
-                return response.json()["embedding"]  # type: ignore[no-any-return]
-
-            embedding = await with_retry(
-                _call, operation_name=f"Ollama embed [{self.model}]"
+            response = await self._client.post(
+                "/api/embeddings",
+                json={"model": self.model, "prompt": text},
             )
-            embeddings.append(embedding)
+            response.raise_for_status()
+            embeddings.append(response.json()["embedding"])
 
         return embeddings

@@ -104,10 +104,11 @@ class EntityExtractor:
         prompt = self._prompt_template.replace("{content}", truncated)
 
         try:
-            response = await self.llm_router.complete(
+            result = await self.llm_router.complete(
                 task="entity_extraction",
                 prompt=prompt,
             )
+            response = result.text
         except Exception as exc:
             logger.error(
                 "LLM call failed during entity extraction: %s — returning empty list",

@@ -1,5 +1,25 @@
 """Abstract base class for LLM providers."""
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True, slots=True)
+class CompletionResult:
+    """Structured result from an LLM completion call.
+
+    Attributes:
+        text: The generated text response.
+        input_tokens: Number of prompt/input tokens consumed, or None if
+            the provider did not report usage.
+        output_tokens: Number of completion/output tokens generated, or None
+            if the provider did not report usage.
+        model: The model identifier that produced the response.
+    """
+
+    text: str
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    model: str | None = None
 
 
 class LLMProvider(ABC):
@@ -11,7 +31,9 @@ class LLMProvider(ABC):
     """
 
     @abstractmethod
-    async def complete(self, prompt: str, system: str = "", **kwargs: object) -> str:
+    async def complete(
+        self, prompt: str, system: str = "", **kwargs: object
+    ) -> CompletionResult:
         """Generate a completion for the given prompt.
 
         Args:
@@ -20,7 +42,7 @@ class LLMProvider(ABC):
             **kwargs: Provider-specific options (temperature, max_tokens, etc.).
 
         Returns:
-            The generated text response.
+            A CompletionResult containing the generated text and token usage.
         """
         ...
 

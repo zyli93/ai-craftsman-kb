@@ -27,6 +27,7 @@ from ai_craftsman_kb.config.models import (
 from ai_craftsman_kb.db.models import DiscoveredSourceRow, DocumentRow, SourceRow
 from ai_craftsman_kb.db.queries import list_discovered_sources, upsert_discovered_source, upsert_source
 from ai_craftsman_kb.db.sqlite import SCHEMA_SQL
+from ai_craftsman_kb.llm import CompletionResult
 from ai_craftsman_kb.llm.router import LLMRouter
 from ai_craftsman_kb.processing.discoverer import (
     SourceDiscoverer,
@@ -65,7 +66,7 @@ def make_config() -> AppConfig:
 def make_llm_router(complete_return: str = "[]") -> LLMRouter:
     """Build a mock LLMRouter whose complete() returns a fixed string."""
     router = MagicMock(spec=LLMRouter)
-    router.complete = AsyncMock(return_value=complete_return)
+    router.complete = AsyncMock(return_value=CompletionResult(text=complete_return))
     return router
 
 

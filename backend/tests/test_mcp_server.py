@@ -23,6 +23,8 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from ai_craftsman_kb.llm import CompletionResult
+
 import pytest
 import pytest_asyncio
 
@@ -148,7 +150,7 @@ def mock_llm_router() -> MagicMock:
         MagicMock with async complete.
     """
     router = MagicMock()
-    router.complete = AsyncMock(return_value="Test briefing content")
+    router.complete = AsyncMock(return_value=CompletionResult(text="Test briefing content"))
     return router
 
 

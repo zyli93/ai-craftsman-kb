@@ -86,10 +86,11 @@ class KeywordExtractor:
         prompt = self._prompt_template.replace("{content}", truncated)
 
         try:
-            response = await self.llm_router.complete(
+            result = await self.llm_router.complete(
                 task="keyword_extraction",
                 prompt=prompt,
             )
+            response = result.text
         except Exception as exc:
             logger.error(
                 "LLM call failed during keyword extraction: %s -- returning empty list",

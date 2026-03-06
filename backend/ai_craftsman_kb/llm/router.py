@@ -1,9 +1,9 @@
-"""LLM Router — dispatches tasks to configured providers."""
+"""LLM Router -- dispatches tasks to configured providers."""
 import logging
 from typing import TYPE_CHECKING
 
 from .anthropic_provider import AnthropicProvider
-from .base import LLMProvider
+from .base import CompletionResult, LLMProvider
 from .ollama_provider import OllamaProvider
 from .openai_provider import OpenAIProvider
 from .openrouter_provider import OpenRouterProvider
@@ -100,7 +100,7 @@ class LLMRouter:
             )
 
         raise ValueError(
-            f"Unknown LLM provider: '{provider_name}'. "
+            f"Unknown LLM provider: \'{provider_name}\'. "
             f"Supported providers: openai, openrouter, anthropic, ollama, fireworks."
         )
 
@@ -145,7 +145,7 @@ class LLMRouter:
         prompt: str,
         system: str = "",
         **kwargs: object,
-    ) -> str:
+    ) -> CompletionResult:
         """Route a completion request to the configured provider for the task.
 
         Args:
@@ -157,7 +157,7 @@ class LLMRouter:
                 max_tokens).
 
         Returns:
-            The generated text response.
+            A CompletionResult containing the generated text and token usage.
 
         Raises:
             ValueError: If the task name is not recognised.
@@ -165,7 +165,7 @@ class LLMRouter:
         """
         if task not in TASK_NAMES:
             raise ValueError(
-                f"Unknown task: '{task}'. Must be one of {TASK_NAMES}."
+                f"Unknown task: \'{task}\'. Must be one of {TASK_NAMES}."
             )
         provider = self._get_task_provider(task)
         try:

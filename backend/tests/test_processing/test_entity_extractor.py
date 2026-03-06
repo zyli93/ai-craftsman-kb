@@ -22,6 +22,7 @@ from ai_craftsman_kb.config.models import (
     SourcesConfig,
 )
 from ai_craftsman_kb.db.sqlite import SCHEMA_SQL
+from ai_craftsman_kb.llm import CompletionResult
 from ai_craftsman_kb.llm.router import LLMRouter
 from ai_craftsman_kb.processing.entity_extractor import (
     VALID_ENTITY_TYPES,
@@ -55,7 +56,7 @@ def _make_app_config() -> AppConfig:
 def _make_llm_router(complete_return: str = "[]") -> LLMRouter:
     """Build a mock LLMRouter whose complete() returns a fixed string."""
     router = MagicMock(spec=LLMRouter)
-    router.complete = AsyncMock(return_value=complete_return)
+    router.complete = AsyncMock(return_value=CompletionResult(text=complete_return))
     return router
 
 

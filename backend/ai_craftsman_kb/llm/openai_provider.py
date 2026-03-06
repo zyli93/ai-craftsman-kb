@@ -3,8 +3,7 @@ import logging
 
 from openai import AsyncOpenAI
 
-from .base import LLMProvider
-from .retry import with_retry
+from .base import CompletionResult, LLMProvider
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +37,9 @@ class OpenAIProvider(LLMProvider):
         self.model = model
         self.embedding_model = embedding_model
 
-    async def complete(self, prompt: str, system: str = "", **kwargs: object) -> str:
+    async def complete(
+        self, prompt: str, system: str = "", **kwargs: object
+    ) -> CompletionResult:
         """Call OpenAI chat completions API.
 
         Args:
@@ -48,7 +49,7 @@ class OpenAIProvider(LLMProvider):
                 max_tokens).
 
         Returns:
-            The assistant's text response.
+            A CompletionResult with the response text and token usage.
         """
         messages: list[dict[str, str]] = []
         if system:
@@ -62,15 +63,19 @@ class OpenAIProvider(LLMProvider):
             if k in ("temperature", "max_tokens", "top_p", "stop", "stream")
         }
 
-        async def _call() -> str:
-            response = await self._client.chat.completions.create(
-                model=self.model,
-                messages=messages,  # type: ignore[arg-type]
-                **safe_kwargs,
-            )
-            return response.choices[0].message.content or ""
-
-        return await with_retry(_call, operation_name=f"OpenAI complete [{self.model}]")
+        response = await self._client.chat.completions.create(
+            model=self.model,
+            messages=messages,  # type: ignore[arg-type]
+            **safe_kwargs,
+        )
+        text = response.choices[0].message.content or ""
+        usage = response.usage
+        return CompletionResult(
+            text=text,
+            input_tokens=usage.prompt_tokens if usage else None,
+            output_tokens=usage.completion_tokens if usage else None,
+            model=self.model,
+        )
 
     async def embed(self, texts: list[str]) -> list[list[float]]:
         """Batch embed texts using the OpenAI embeddings API.
@@ -83,15 +88,9 @@ class OpenAIProvider(LLMProvider):
         Returns:
             List of embedding vectors, one per input string, in the same order.
         """
-
-        async def _call() -> list[list[float]]:
-            response = await self._client.embeddings.create(
-                model=self.embedding_model,
-                input=texts,
-            )
-            # Results are returned sorted by index, matching input order
-            return [item.embedding for item in response.data]
-
-        return await with_retry(
-            _call, operation_name=f"OpenAI embed [{self.embedding_model}]"
+        response = await self._client.embeddings.create(
+            model=self.embedding_model,
+            input=texts,
         )
+        # Results are returned sorted by index, matching input order
+        return [item.embedding for item in response.data]

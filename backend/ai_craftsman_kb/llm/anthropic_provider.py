@@ -3,8 +3,7 @@ import logging
 
 import httpx
 
-from .base import LLMProvider
-from .retry import with_retry
+from .base import CompletionResult, LLMProvider
 
 logger = logging.getLogger(__name__)
 
@@ -16,7 +15,7 @@ DEFAULT_MAX_TOKENS = 4096
 class AnthropicProvider(LLMProvider):
     """Anthropic provider for Claude models via the Messages API.
 
-    Does not support embeddings — use OpenAIProvider for that.
+    Does not support embeddings -- use OpenAIProvider for that.
 
     Args:
         api_key: Anthropic API key.
@@ -40,7 +39,9 @@ class AnthropicProvider(LLMProvider):
             timeout=120.0,
         )
 
-    async def complete(self, prompt: str, system: str = "", **kwargs: object) -> str:
+    async def complete(
+        self, prompt: str, system: str = "", **kwargs: object
+    ) -> CompletionResult:
         """Call the Anthropic Messages API.
 
         Args:
@@ -50,7 +51,7 @@ class AnthropicProvider(LLMProvider):
                 Supported: max_tokens (default 4096), temperature.
 
         Returns:
-            The assistant's text response.
+            A CompletionResult with the response text and token usage.
 
         Raises:
             httpx.HTTPStatusError: On non-retryable HTTP errors.
@@ -67,15 +68,17 @@ class AnthropicProvider(LLMProvider):
         if "temperature" in kwargs:
             payload["temperature"] = kwargs["temperature"]
 
-        async def _call() -> str:
-            response = await self._client.post("/v1/messages", json=payload)
-            response.raise_for_status()
-            data = response.json()
-            # Content is a list of content blocks; the first text block is the response
-            return data["content"][0]["text"]
-
-        return await with_retry(
-            _call, operation_name=f"Anthropic complete [{self.model}]"
+        response = await self._client.post("/v1/messages", json=payload)
+        response.raise_for_status()
+        data = response.json()
+        # Content is a list of content blocks; the first text block is the response
+        text = data["content"][0]["text"]
+        usage = data.get("usage") or {}
+        return CompletionResult(
+            text=text,
+            input_tokens=usage.get("input_tokens"),
+            output_tokens=usage.get("output_tokens"),
+            model=self.model,
         )
 
     async def embed(self, texts: list[str]) -> list[list[float]]:
@@ -85,5 +88,5 @@ class AnthropicProvider(LLMProvider):
             NotImplementedError: Always. Use OpenAIProvider for embeddings.
         """
         raise NotImplementedError(
-            "Anthropic does not support embeddings — use OpenAIProvider instead."
+            "Anthropic does not support embeddings -- use OpenAIProvider instead."
         )

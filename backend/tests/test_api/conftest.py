@@ -10,6 +10,8 @@ from pathlib import Path
 from typing import AsyncGenerator
 from unittest.mock import AsyncMock, MagicMock
 
+from ai_craftsman_kb.llm import CompletionResult
+
 import aiosqlite
 import pytest
 import pytest_asyncio
@@ -91,7 +93,7 @@ def mock_llm_router() -> MagicMock:
         A MagicMock with async complete method.
     """
     router = MagicMock()
-    router.complete = AsyncMock(return_value="Test LLM response")
+    router.complete = AsyncMock(return_value=CompletionResult(text="Test LLM response"))
     return router
 
 

@@ -12,7 +12,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 
-from ai_craftsman_kb.llm import AsyncRateLimiter, LLMProvider, LLMRouter
+from ai_craftsman_kb.llm import AsyncRateLimiter, CompletionResult, LLMProvider, LLMRouter
 from ai_craftsman_kb.llm.anthropic_provider import AnthropicProvider
 from ai_craftsman_kb.llm.ollama_provider import OllamaProvider
 from ai_craftsman_kb.llm.openai_provider import OpenAIProvider
@@ -100,14 +100,21 @@ async def test_openai_provider_complete() -> None:
     mock_message.content = "Hello, world!"
     mock_choice = MagicMock()
     mock_choice.message = mock_message
+    mock_usage = MagicMock()
+    mock_usage.prompt_tokens = 10
+    mock_usage.completion_tokens = 5
     mock_response = MagicMock()
     mock_response.choices = [mock_choice]
+    mock_response.usage = mock_usage
 
     provider._client.chat.completions.create = AsyncMock(return_value=mock_response)
 
     result = await provider.complete("Say hello", system="You are helpful.")
 
-    assert result == "Hello, world!"
+    assert result.text == "Hello, world!"
+    assert result.input_tokens == 10
+    assert result.output_tokens == 5
+    assert result.model == "gpt-4o-mini"
     provider._client.chat.completions.create.assert_called_once()
     call_kwargs = provider._client.chat.completions.create.call_args
     messages = call_kwargs.kwargs["messages"]
@@ -124,8 +131,12 @@ async def test_openai_provider_complete_no_system() -> None:
     mock_message.content = "Response"
     mock_choice = MagicMock()
     mock_choice.message = mock_message
+    mock_usage = MagicMock()
+    mock_usage.prompt_tokens = 5
+    mock_usage.completion_tokens = 3
     mock_response = MagicMock()
     mock_response.choices = [mock_choice]
+    mock_response.usage = mock_usage
 
     provider._client.chat.completions.create = AsyncMock(return_value=mock_response)
 
@@ -181,7 +192,8 @@ async def test_openrouter_provider_complete() -> None:
 
     mock_resp = MagicMock(spec=httpx.Response)
     mock_resp.json.return_value = {
-        "choices": [{"message": {"content": "OpenRouter reply"}}]
+        "choices": [{"message": {"content": "OpenRouter reply"}}],
+        "usage": {"prompt_tokens": 12, "completion_tokens": 8},
     }
     mock_resp.raise_for_status = MagicMock()
 
@@ -189,7 +201,9 @@ async def test_openrouter_provider_complete() -> None:
 
     result = await provider.complete("Summarise this", system="Be concise.")
 
-    assert result == "OpenRouter reply"
+    assert result.text == "OpenRouter reply"
+    assert result.input_tokens == 12
+    assert result.output_tokens == 8
     provider._client.post.assert_called_once()
     call_args = provider._client.post.call_args
     assert call_args.args[0] == "/chat/completions"
@@ -219,7 +233,8 @@ async def test_anthropic_provider_complete() -> None:
 
     mock_resp = MagicMock(spec=httpx.Response)
     mock_resp.json.return_value = {
-        "content": [{"type": "text", "text": "Anthropic reply"}]
+        "content": [{"type": "text", "text": "Anthropic reply"}],
+        "usage": {"input_tokens": 15, "output_tokens": 10},
     }
     mock_resp.raise_for_status = MagicMock()
 
@@ -227,7 +242,9 @@ async def test_anthropic_provider_complete() -> None:
 
     result = await provider.complete("Draft a summary", system="You are an expert.")
 
-    assert result == "Anthropic reply"
+    assert result.text == "Anthropic reply"
+    assert result.input_tokens == 15
+    assert result.output_tokens == 10
     provider._client.post.assert_called_once()
     call_args = provider._client.post.call_args
     assert call_args.args[0] == "/v1/messages"
@@ -243,7 +260,10 @@ async def test_anthropic_provider_complete_respects_max_tokens() -> None:
     provider = AnthropicProvider(api_key="ant-test")
 
     mock_resp = MagicMock(spec=httpx.Response)
-    mock_resp.json.return_value = {"content": [{"type": "text", "text": "ok"}]}
+    mock_resp.json.return_value = {
+        "content": [{"type": "text", "text": "ok"}],
+        "usage": {"input_tokens": 3, "output_tokens": 1},
+    }
     mock_resp.raise_for_status = MagicMock()
 
     provider._client.post = AsyncMock(return_value=mock_resp)
@@ -273,14 +293,20 @@ async def test_ollama_provider_complete() -> None:
     provider = OllamaProvider(model="llama3")
 
     mock_resp = MagicMock(spec=httpx.Response)
-    mock_resp.json.return_value = {"message": {"content": "Ollama reply"}}
+    mock_resp.json.return_value = {
+        "message": {"content": "Ollama reply"},
+        "prompt_eval_count": 7,
+        "eval_count": 4,
+    }
     mock_resp.raise_for_status = MagicMock()
 
     provider._client.post = AsyncMock(return_value=mock_resp)
 
     result = await provider.complete("Hello")
 
-    assert result == "Ollama reply"
+    assert result.text == "Ollama reply"
+    assert result.input_tokens == 7
+    assert result.output_tokens == 4
     call_args = provider._client.post.call_args
     assert call_args.args[0] == "/api/chat"
     payload = call_args.kwargs["json"]
@@ -333,12 +359,13 @@ async def test_router_dispatches_filtering_to_openrouter() -> None:
     }
     mock_resp.raise_for_status = MagicMock()
 
+    mock_result = CompletionResult(text="filtered", model="meta-llama/llama-3.1-8b-instruct")
     with patch.object(
-        OpenRouterProvider, "complete", new_callable=AsyncMock, return_value="filtered"
+        OpenRouterProvider, "complete", new_callable=AsyncMock, return_value=mock_result
     ) as mock_complete:
         result = await router.complete("filtering", prompt="Is this relevant?")
 
-    assert result == "filtered"
+    assert result.text == "filtered"
     mock_complete.assert_called_once_with(
         prompt="Is this relevant?", system=""
     )
@@ -350,12 +377,13 @@ async def test_router_dispatches_briefing_to_anthropic() -> None:
     config = _make_app_config()
     router = LLMRouter(config)
 
+    mock_result = CompletionResult(text="briefing text", model="claude-haiku-4-5-20251001")
     with patch.object(
-        AnthropicProvider, "complete", new_callable=AsyncMock, return_value="briefing text"
+        AnthropicProvider, "complete", new_callable=AsyncMock, return_value=mock_result
     ) as mock_complete:
         result = await router.complete("briefing", prompt="Write a briefing")
 
-    assert result == "briefing text"
+    assert result.text == "briefing text"
     mock_complete.assert_called_once()
 
 
@@ -421,8 +449,9 @@ async def test_router_caches_provider_instances() -> None:
     config = _make_app_config()
     router = LLMRouter(config)
 
+    mock_result = CompletionResult(text="ok", model="test")
     with patch.object(
-        OpenRouterProvider, "complete", new_callable=AsyncMock, return_value="ok"
+        OpenRouterProvider, "complete", new_callable=AsyncMock, return_value=mock_result
     ):
         await router.complete("filtering", prompt="first call")
         await router.complete("filtering", prompt="second call")
@@ -441,12 +470,13 @@ async def test_router_ollama_provider_no_api_key_required() -> None:
     config.settings.llm.filtering.model = "llama3"
     router = LLMRouter(config)
 
+    mock_result = CompletionResult(text="local result", model="llama3")
     with patch.object(
-        OllamaProvider, "complete", new_callable=AsyncMock, return_value="local result"
+        OllamaProvider, "complete", new_callable=AsyncMock, return_value=mock_result
     ) as mock_complete:
         result = await router.complete("filtering", prompt="test")
 
-    assert result == "local result"
+    assert result.text == "local result"
 
 
 # ---------------------------------------------------------------------------

@@ -22,6 +22,8 @@ Tests cover:
 import re
 from unittest.mock import AsyncMock, MagicMock
 
+from ai_craftsman_kb.llm import CompletionResult
+
 import aiosqlite
 import pytest
 
@@ -91,7 +93,7 @@ def _make_generator(
 
     # Mock LLM router
     llm_router = MagicMock()
-    llm_router.complete = AsyncMock(return_value=llm_response)
+    llm_router.complete = AsyncMock(return_value=CompletionResult(text=llm_response))
 
     # Mock hybrid search
     hybrid_search = MagicMock()

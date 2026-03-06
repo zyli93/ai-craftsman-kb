@@ -363,10 +363,11 @@ class SourceDiscoverer:
         )
 
         try:
-            response = await self._llm_router.complete(
+            result = await self._llm_router.complete(
                 task="source_discovery",
                 prompt=prompt,
             )
+            response = result.text
         except Exception:
             logger.exception("LLM source discovery call failed; skipping")
             return []

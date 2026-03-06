@@ -3,6 +3,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from ai_craftsman_kb.llm import CompletionResult
+
 import pytest
 
 from ai_craftsman_kb.config.models import (
@@ -116,7 +118,7 @@ def mock_llm_router() -> MagicMock:
         A MagicMock with complete patched to return '8'.
     """
     router = MagicMock()
-    router.complete = AsyncMock(return_value="8")
+    router.complete = AsyncMock(return_value=CompletionResult(text="8"))
     return router
 
 

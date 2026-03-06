@@ -142,8 +142,8 @@ class ContentFilter:
         prompt = cfg.llm_prompt.format(title=title, excerpt=excerpt)
 
         try:
-            response = await self.llm_router.complete(task="filtering", prompt=prompt)
-            score = self._parse_llm_score(response)
+            result = await self.llm_router.complete(task="filtering", prompt=prompt)
+            score = self._parse_llm_score(result.text)
         except Exception as e:
             logger.error("LLM filter failed: %s; defaulting to pass", e)
             return FilterResult(passed=True, score=None, reason=f"llm error: {e}")

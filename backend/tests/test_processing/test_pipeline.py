@@ -10,6 +10,8 @@ import uuid
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from ai_craftsman_kb.llm import CompletionResult
+
 import aiosqlite
 import pytest
 
@@ -808,7 +810,7 @@ async def test_ingest_runner_calls_pipeline_after_store() -> None:
 
     config = _make_config()
     llm_router = MagicMock()
-    llm_router.complete = AsyncMock(return_value="5")  # Filter returns score 5
+    llm_router.complete = AsyncMock(return_value=CompletionResult(text="5"))  # Filter returns score 5
 
     import tempfile
     from pathlib import Path
@@ -892,7 +894,7 @@ async def test_ingest_runner_without_pipeline_works() -> None:
 
     config = _make_config()
     llm_router = MagicMock()
-    llm_router.complete = AsyncMock(return_value="5")
+    llm_router.complete = AsyncMock(return_value=CompletionResult(text="5"))
 
     import tempfile
     from pathlib import Path

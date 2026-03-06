@@ -1,10 +1,9 @@
-"""OpenRouter provider — OpenAI-compatible API via httpx."""
+"""OpenRouter provider -- OpenAI-compatible API via httpx."""
 import logging
 
 import httpx
 
-from .base import LLMProvider
-from .retry import with_retry
+from .base import CompletionResult, LLMProvider
 
 logger = logging.getLogger(__name__)
 
@@ -18,7 +17,7 @@ class OpenRouterProvider(LLMProvider):
     """OpenRouter provider for chat completions.
 
     Uses the OpenAI-compatible API endpoint at openrouter.ai.
-    Does not support embeddings — use OpenAIProvider for that.
+    Does not support embeddings -- use OpenAIProvider for that.
 
     Args:
         api_key: OpenRouter API key.
@@ -39,7 +38,9 @@ class OpenRouterProvider(LLMProvider):
             timeout=60.0,
         )
 
-    async def complete(self, prompt: str, system: str = "", **kwargs: object) -> str:
+    async def complete(
+        self, prompt: str, system: str = "", **kwargs: object
+    ) -> CompletionResult:
         """Call OpenRouter chat completions (OpenAI-compatible).
 
         Args:
@@ -48,7 +49,7 @@ class OpenRouterProvider(LLMProvider):
             **kwargs: Optional parameters: temperature, max_tokens, top_p, stop.
 
         Returns:
-            The model's text response.
+            A CompletionResult with the response text and token usage.
 
         Raises:
             httpx.HTTPStatusError: On non-retryable HTTP errors.
@@ -64,14 +65,16 @@ class OpenRouterProvider(LLMProvider):
             **{k: v for k, v in kwargs.items() if k in _ALLOWED_KWARGS},
         }
 
-        async def _call() -> str:
-            response = await self._client.post("/chat/completions", json=payload)
-            response.raise_for_status()
-            data = response.json()
-            return data["choices"][0]["message"]["content"] or ""
-
-        return await with_retry(
-            _call, operation_name=f"OpenRouter complete [{self.model}]"
+        response = await self._client.post("/chat/completions", json=payload)
+        response.raise_for_status()
+        data = response.json()
+        text = data["choices"][0]["message"]["content"] or ""
+        usage = data.get("usage") or {}
+        return CompletionResult(
+            text=text,
+            input_tokens=usage.get("prompt_tokens"),
+            output_tokens=usage.get("completion_tokens"),
+            model=self.model,
         )
 
     async def embed(self, texts: list[str]) -> list[list[float]]:
@@ -81,5 +84,5 @@ class OpenRouterProvider(LLMProvider):
             NotImplementedError: Always. Use OpenAIProvider for embeddings.
         """
         raise NotImplementedError(
-            "OpenRouter does not support embeddings — use OpenAIProvider instead."
+            "OpenRouter does not support embeddings -- use OpenAIProvider instead."
         )

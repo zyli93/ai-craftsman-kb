@@ -186,10 +186,11 @@ class BriefingGenerator:
         # Step 6: LLM completion
         logger.info("BriefingGenerator: calling LLM for topic %r...", topic)
         try:
-            raw_content = await self._llm_router.complete(
+            result = await self._llm_router.complete(
                 task="briefing",
                 prompt=prompt,
             )
+            raw_content = result.text
         except Exception as exc:
             logger.error(
                 "BriefingGenerator: LLM completion failed for %r: %s", topic, exc

@@ -19,6 +19,7 @@ from ai_craftsman_kb.config.models import (
     SourcesConfig,
 )
 from ai_craftsman_kb.ingestors.base import RawDocument
+from ai_craftsman_kb.llm import CompletionResult
 from ai_craftsman_kb.llm.router import LLMRouter
 from ai_craftsman_kb.processing.filter import ContentFilter, FilterResult
 
@@ -53,7 +54,7 @@ def _make_app_config(filters: FiltersConfig | None = None) -> AppConfig:
 def _make_llm_router(complete_return: str = "7") -> LLMRouter:
     """Build a mock LLMRouter whose complete() returns a fixed string."""
     router = MagicMock(spec=LLMRouter)
-    router.complete = AsyncMock(return_value=complete_return)
+    router.complete = AsyncMock(return_value=CompletionResult(text=complete_return))
     return router
 
 
