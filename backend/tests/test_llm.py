@@ -52,10 +52,17 @@ def _make_app_config(
     }
 
     # LLM task routing
-    def _task_cfg(provider: str, model: str) -> MagicMock:
+    def _task_cfg(
+        provider: str,
+        model: str,
+        rate_limit: float | None = None,
+        max_retries: int = 3,
+    ) -> MagicMock:
         m = MagicMock()
         m.provider = provider
         m.model = model
+        m.rate_limit = rate_limit
+        m.max_retries = max_retries
         return m
 
     config.settings.llm.filtering = _task_cfg("openrouter", "meta-llama/llama-3.1-8b-instruct")
@@ -64,6 +71,9 @@ def _make_app_config(
     )
     config.settings.llm.briefing = _task_cfg("anthropic", "claude-haiku-4-5-20251001")
     config.settings.llm.source_discovery = _task_cfg(
+        "openrouter", "meta-llama/llama-3.1-8b-instruct"
+    )
+    config.settings.llm.keyword_extraction = _task_cfg(
         "openrouter", "meta-llama/llama-3.1-8b-instruct"
     )
 
@@ -824,3 +834,195 @@ async def test_rate_limiter_updates_last_request() -> None:
         await limiter.acquire()
 
     assert limiter._last_request > 0.0
+
+
+# ---------------------------------------------------------------------------
+# Router wiring tests -- retry, rate limiting, usage tracking
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_router_complete_wraps_with_retry() -> None:
+    """Router complete() wraps provider call in with_retry."""
+    config = _make_app_config()
+    router = LLMRouter(config)
+    call_count = 0
+
+    async def _flaky_complete(*args: Any, **kwargs: Any) -> CompletionResult:
+        nonlocal call_count
+        call_count += 1
+        if call_count < 2:
+            raise httpx.TimeoutException("timeout")
+        return CompletionResult(text="ok", model="test", input_tokens=5, output_tokens=3)
+
+    with (
+        patch.object(OpenRouterProvider, "complete", side_effect=_flaky_complete),
+        patch("ai_craftsman_kb.llm.retry.asyncio.sleep", new_callable=AsyncMock),
+    ):
+        result = await router.complete("filtering", prompt="test")
+
+    assert result.text == "ok"
+    assert call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_router_complete_uses_task_max_retries() -> None:
+    """Router complete() respects the max_retries from task config."""
+    config = _make_app_config()
+    # Set max_retries to 1 so no retries happen
+    config.settings.llm.filtering.max_retries = 1
+    router = LLMRouter(config)
+
+    with patch.object(
+        OpenRouterProvider,
+        "complete",
+        new_callable=AsyncMock,
+        side_effect=httpx.TimeoutException("timeout"),
+    ):
+        with pytest.raises(httpx.TimeoutException):
+            await router.complete("filtering", prompt="test")
+
+
+@pytest.mark.asyncio
+async def test_router_complete_acquires_rate_limiter() -> None:
+    """Router complete() calls rate limiter acquire() when rate_limit is set."""
+    config = _make_app_config()
+    config.settings.llm.filtering.rate_limit = 30.0
+    router = LLMRouter(config)
+
+    mock_result = CompletionResult(text="ok", model="test")
+    with patch.object(
+        OpenRouterProvider, "complete", new_callable=AsyncMock, return_value=mock_result
+    ):
+        await router.complete("filtering", prompt="first")
+        await router.complete("filtering", prompt="second")
+
+    # A rate limiter should have been created and cached for the task
+    assert "filtering" in router._rate_limiters
+    assert router._rate_limiters["filtering"]._min_interval == 60.0 / 30.0
+
+
+@pytest.mark.asyncio
+async def test_router_complete_no_rate_limiter_when_none() -> None:
+    """Router complete() does not create a rate limiter when rate_limit is None."""
+    config = _make_app_config()
+    # rate_limit defaults to None in _make_app_config
+    router = LLMRouter(config)
+
+    mock_result = CompletionResult(text="ok", model="test")
+    with patch.object(
+        OpenRouterProvider, "complete", new_callable=AsyncMock, return_value=mock_result
+    ):
+        await router.complete("filtering", prompt="test")
+
+    assert "filtering" not in router._rate_limiters
+
+
+@pytest.mark.asyncio
+async def test_router_complete_records_usage_on_success() -> None:
+    """Router complete() records usage via tracker on successful call."""
+    config = _make_app_config()
+    tracker = AsyncMock()
+    router = LLMRouter(config, usage_tracker=tracker)
+
+    mock_result = CompletionResult(
+        text="ok", model="test-model", input_tokens=10, output_tokens=5
+    )
+    with patch.object(
+        OpenRouterProvider, "complete", new_callable=AsyncMock, return_value=mock_result
+    ):
+        await router.complete("filtering", prompt="test")
+
+    tracker.record.assert_called_once()
+    call_kwargs = tracker.record.call_args.kwargs
+    assert call_kwargs["provider"] == "openrouter"
+    assert call_kwargs["model"] == "meta-llama/llama-3.1-8b-instruct"
+    assert call_kwargs["task"] == "filtering"
+    assert call_kwargs["input_tokens"] == 10
+    assert call_kwargs["output_tokens"] == 5
+    assert call_kwargs["success"] is True
+    assert isinstance(call_kwargs["duration_ms"], int)
+    assert call_kwargs["duration_ms"] >= 0
+
+
+@pytest.mark.asyncio
+async def test_router_complete_records_usage_on_failure() -> None:
+    """Router complete() records usage with success=False when the call fails."""
+    config = _make_app_config()
+    config.settings.llm.filtering.max_retries = 1
+    tracker = AsyncMock()
+    router = LLMRouter(config, usage_tracker=tracker)
+
+    with patch.object(
+        OpenRouterProvider,
+        "complete",
+        new_callable=AsyncMock,
+        side_effect=ValueError("bad"),
+    ):
+        with pytest.raises(ValueError, match="bad"):
+            await router.complete("filtering", prompt="test")
+
+    tracker.record.assert_called_once()
+    call_kwargs = tracker.record.call_args.kwargs
+    assert call_kwargs["success"] is False
+    assert call_kwargs["task"] == "filtering"
+
+
+@pytest.mark.asyncio
+async def test_router_complete_no_tracker_no_error() -> None:
+    """Router complete() works fine without a usage tracker."""
+    config = _make_app_config()
+    router = LLMRouter(config)  # No tracker
+
+    mock_result = CompletionResult(text="ok", model="test")
+    with patch.object(
+        OpenRouterProvider, "complete", new_callable=AsyncMock, return_value=mock_result
+    ):
+        result = await router.complete("filtering", prompt="test")
+
+    assert result.text == "ok"
+
+
+@pytest.mark.asyncio
+async def test_router_embed_records_usage_on_success() -> None:
+    """Router embed() records usage via tracker on successful call."""
+    config = _make_app_config()
+    tracker = AsyncMock()
+    router = LLMRouter(config, usage_tracker=tracker)
+
+    expected = [[0.1, 0.2, 0.3]]
+    with patch.object(
+        OpenAIProvider, "embed", new_callable=AsyncMock, return_value=expected
+    ):
+        result = await router.embed(["hello"])
+
+    assert result == expected
+    tracker.record.assert_called_once()
+    call_kwargs = tracker.record.call_args.kwargs
+    assert call_kwargs["provider"] == "openai"
+    assert call_kwargs["model"] == "text-embedding-3-small"
+    assert call_kwargs["task"] == "embedding"
+    assert call_kwargs["success"] is True
+    assert isinstance(call_kwargs["duration_ms"], int)
+
+
+@pytest.mark.asyncio
+async def test_router_embed_records_usage_on_failure() -> None:
+    """Router embed() records usage with success=False when the call fails."""
+    config = _make_app_config()
+    tracker = AsyncMock()
+    router = LLMRouter(config, usage_tracker=tracker)
+
+    with patch.object(
+        OpenAIProvider,
+        "embed",
+        new_callable=AsyncMock,
+        side_effect=RuntimeError("embed failed"),
+    ):
+        with pytest.raises(RuntimeError, match="embed failed"):
+            await router.embed(["hello"])
+
+    tracker.record.assert_called_once()
+    call_kwargs = tracker.record.call_args.kwargs
+    assert call_kwargs["success"] is False
+    assert call_kwargs["task"] == "embedding"

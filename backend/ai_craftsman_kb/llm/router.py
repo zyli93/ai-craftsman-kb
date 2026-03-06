@@ -1,5 +1,6 @@
 """LLM Router -- dispatches tasks to configured providers."""
 import logging
+import time
 from typing import TYPE_CHECKING
 
 from .anthropic_provider import AnthropicProvider
@@ -7,6 +8,9 @@ from .base import CompletionResult, LLMProvider
 from .ollama_provider import OllamaProvider
 from .openai_provider import OpenAIProvider
 from .openrouter_provider import OpenRouterProvider
+from .rate_limiter import AsyncRateLimiter
+from .retry import with_retry
+from .usage_tracker import UsageTracker
 
 if TYPE_CHECKING:
     from ..config.models import AppConfig
@@ -21,7 +25,9 @@ class LLMRouter:
     """Routes LLM tasks to providers based on settings.yaml configuration.
 
     The router lazily instantiates providers on first use and caches them
-    for subsequent calls within the same session.
+    for subsequent calls within the same session.  It centralises retry
+    logic, optional per-task rate limiting, and usage tracking so that
+    individual providers remain thin HTTP wrappers.
 
     Usage::
 
@@ -31,14 +37,23 @@ class LLMRouter:
 
     Args:
         config: Fully loaded AppConfig from the config system.
+        usage_tracker: Optional tracker that records token consumption
+            to the SQLite ``llm_usage`` table.
     """
 
-    def __init__(self, config: "AppConfig") -> None:
+    def __init__(
+        self,
+        config: "AppConfig",
+        usage_tracker: UsageTracker | None = None,
+    ) -> None:
         self._config = config
+        self._usage_tracker = usage_tracker
         # Cache of lazily-instantiated task providers (keyed by task name)
         self._task_providers: dict[str, LLMProvider] = {}
         # Lazily-instantiated embedding provider
         self._embedding_provider: LLMProvider | None = None
+        # Lazy cache of rate limiters keyed by task name
+        self._rate_limiters: dict[str, AsyncRateLimiter] = {}
 
     def _build_provider(self, provider_name: str, model: str) -> LLMProvider:
         """Instantiate a provider by name using configuration from AppConfig.
@@ -100,7 +115,7 @@ class LLMRouter:
             )
 
         raise ValueError(
-            f"Unknown LLM provider: \'{provider_name}\'. "
+            f"Unknown LLM provider: '{provider_name}'. "
             f"Supported providers: openai, openrouter, anthropic, ollama, fireworks."
         )
 
@@ -139,6 +154,20 @@ class LLMRouter:
             )
         return self._embedding_provider
 
+    def _get_rate_limiter(self, task: str, rpm: float) -> AsyncRateLimiter:
+        """Get or create a cached rate limiter for a task.
+
+        Args:
+            task: Task name used as the cache key.
+            rpm: Requests per minute for the limiter.
+
+        Returns:
+            An AsyncRateLimiter instance.
+        """
+        if task not in self._rate_limiters:
+            self._rate_limiters[task] = AsyncRateLimiter(rpm=rpm)
+        return self._rate_limiters[task]
+
     async def complete(
         self,
         task: str,
@@ -147,6 +176,10 @@ class LLMRouter:
         **kwargs: object,
     ) -> CompletionResult:
         """Route a completion request to the configured provider for the task.
+
+        Applies per-task rate limiting (if configured), wraps the provider
+        call in retry logic, times the request, and records usage via the
+        tracker when one is present.
 
         Args:
             task: One of 'filtering', 'entity_extraction', 'briefing',
@@ -165,17 +198,59 @@ class LLMRouter:
         """
         if task not in TASK_NAMES:
             raise ValueError(
-                f"Unknown task: \'{task}\'. Must be one of {TASK_NAMES}."
+                f"Unknown task: '{task}'. Must be one of {TASK_NAMES}."
             )
+
         provider = self._get_task_provider(task)
+
+        # Retrieve the per-task config for rate_limit and max_retries
+        task_cfg = getattr(self._config.settings.llm, task)
+
+        # Apply rate limiting if configured
+        if task_cfg.rate_limit is not None:
+            limiter = self._get_rate_limiter(task, task_cfg.rate_limit)
+            await limiter.acquire()
+
+        t0 = time.monotonic()
         try:
-            return await provider.complete(prompt=prompt, system=system, **kwargs)
+            result = await with_retry(
+                lambda: provider.complete(prompt=prompt, system=system, **kwargs),
+                max_attempts=task_cfg.max_retries,
+                operation_name=f"llm.complete({task})",
+            )
         except Exception:
+            duration_ms = int((time.monotonic() - t0) * 1000)
             logger.exception("LLM completion failed for task '%s'", task)
+            if self._usage_tracker is not None:
+                await self._usage_tracker.record(
+                    provider=task_cfg.provider,
+                    model=task_cfg.model,
+                    task=task,
+                    duration_ms=duration_ms,
+                    success=False,
+                )
             raise
+
+        duration_ms = int((time.monotonic() - t0) * 1000)
+        if self._usage_tracker is not None:
+            await self._usage_tracker.record(
+                provider=task_cfg.provider,
+                model=task_cfg.model,
+                task=task,
+                input_tokens=result.input_tokens,
+                output_tokens=result.output_tokens,
+                duration_ms=duration_ms,
+                success=True,
+            )
+
+        return result
 
     async def embed(self, texts: list[str]) -> list[list[float]]:
         """Embed texts using the configured embedding provider.
+
+        Times the request and records usage via the tracker when one is
+        present.  Embedding calls are not rate-limited or retried because
+        they lack per-task configuration.
 
         Args:
             texts: List of strings to embed.
@@ -187,8 +262,32 @@ class LLMRouter:
             Exception: Re-raises provider errors after logging.
         """
         provider = self._get_embedding_provider()
+        emb_cfg = self._config.settings.embedding
+
+        t0 = time.monotonic()
         try:
-            return await provider.embed(texts)
+            result = await provider.embed(texts)
         except Exception:
+            duration_ms = int((time.monotonic() - t0) * 1000)
             logger.exception("Embedding failed")
+            if self._usage_tracker is not None:
+                await self._usage_tracker.record(
+                    provider=emb_cfg.provider,
+                    model=emb_cfg.model,
+                    task="embedding",
+                    duration_ms=duration_ms,
+                    success=False,
+                )
             raise
+
+        duration_ms = int((time.monotonic() - t0) * 1000)
+        if self._usage_tracker is not None:
+            await self._usage_tracker.record(
+                provider=emb_cfg.provider,
+                model=emb_cfg.model,
+                task="embedding",
+                duration_ms=duration_ms,
+                success=True,
+            )
+
+        return result
