@@ -63,7 +63,8 @@ export function AdhocIngest({ onSuccess }: AdhocIngestProps) {
   const detectedType = url ? detectType(url) : null
 
   const ingestMutation = useMutation({
-    mutationFn: () => api.ingest.url({ url: url.trim(), tags: tags.length > 0 ? tags : undefined }),
+    mutationFn: (finalTags: string[]) =>
+      api.ingest.url({ url: url.trim(), tags: finalTags.length > 0 ? finalTags : undefined }),
     onSuccess: (doc) => {
       setIngestedDoc(doc)
       setUrl('')
@@ -103,11 +104,14 @@ export function AdhocIngest({ onSuccess }: AdhocIngestProps) {
   }
 
   function handleIngest() {
-    // Commit any pending tag text before ingesting
-    commitTagInput()
     if (!url.trim()) return
+    // Compute final tags synchronously so the mutation gets them all
+    const pendingTags = parseTags(tagInput)
+    const finalTags = Array.from(new Set([...tags, ...pendingTags]))
+    setTags(finalTags)
+    setTagInput('')
     setIngestedDoc(null)
-    ingestMutation.mutate()
+    ingestMutation.mutate(finalTags)
   }
 
   function handleUrlKeyDown(e: KeyboardEvent<HTMLInputElement>) {
