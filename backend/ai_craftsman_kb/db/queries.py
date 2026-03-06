@@ -308,6 +308,51 @@ async def update_document_flags(
     await conn.commit()
 
 
+async def update_document_user_fields(
+    conn: aiosqlite.Connection,
+    doc_id: str,
+    is_archived: bool | None = None,
+    is_favorited: bool | None = None,
+    user_tags: list[str] | None = None,
+) -> None:
+    """Update user-facing fields on a document (archive, favorite, tags).
+
+    Only the fields that are explicitly passed (not None) are updated.
+
+    Args:
+        conn: An open aiosqlite connection.
+        doc_id: The document's UUID string.
+        is_archived: If provided, update the archive status.
+        is_favorited: If provided, update the favorite status.
+        user_tags: If provided, replace the user tags (stored as JSON).
+    """
+    sets: list[str] = []
+    params: list[Any] = []
+
+    if is_archived is not None:
+        sets.append("is_archived = ?")
+        params.append(is_archived)
+
+    if is_favorited is not None:
+        sets.append("is_favorited = ?")
+        params.append(is_favorited)
+
+    if user_tags is not None:
+        import json
+        sets.append("user_tags = ?")
+        params.append(json.dumps(user_tags))
+
+    if not sets:
+        return
+
+    params.append(doc_id)
+    await conn.execute(
+        f"UPDATE documents SET {', '.join(sets)} WHERE id = ?",  # noqa: S608
+        params,
+    )
+    await conn.commit()
+
+
 async def promote_document(conn: aiosqlite.Connection, doc_id: str) -> None:
     """Promote a radar document to the pro tier by setting promoted_at timestamp.
 

@@ -332,6 +332,20 @@ class UsageRecordOut(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+class UpdateDocumentRequest(BaseModel):
+    """Request body for PUT /api/documents/{id}.
+
+    Attributes:
+        is_archived: If provided, update the archive status.
+        is_favorited: If provided, update the favorite status.
+        user_tags: If provided, replace the user tags list.
+    """
+
+    is_archived: bool | None = None
+    is_favorited: bool | None = None
+    user_tags: list[str] | None = None
+
+
 class IngestURLRequest(BaseModel):
     """Request body for POST /api/ingest/url.
 

@@ -14,9 +14,9 @@ import aiosqlite
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from ..db.models import DocumentRow
-from ..db.queries import get_document, list_documents, soft_delete_document
+from ..db.queries import get_document, list_documents, soft_delete_document, update_document_user_fields
 from .deps import get_conn
-from .models import DocumentOut
+from .models import DocumentOut, UpdateDocumentRequest
 
 logger = logging.getLogger(__name__)
 
@@ -79,7 +79,7 @@ async def list_documents_endpoint(
     ),
     limit: int = Query(default=50, ge=1, le=100, description="Maximum results"),
     offset: int = Query(default=0, ge=0, description="Results to skip"),
-    include_archived: bool = Query(default=False, description="Include archived documents"),
+    is_archived: bool = Query(default=False, description="Include archived documents"),
     conn: Annotated[aiosqlite.Connection, Depends(get_conn)] = None,
 ) -> list[DocumentOut]:
     """List documents with optional filters.
@@ -92,7 +92,7 @@ async def list_documents_endpoint(
         source_type: Optional source type filter.
         limit: Maximum results (1-100, default 50).
         offset: Pagination offset.
-        include_archived: Include archived documents (default False).
+        is_archived: Include archived documents (default False).
         conn: DB connection (injected).
 
     Returns:
@@ -104,7 +104,7 @@ async def list_documents_endpoint(
         source_type=source_type,
         limit=limit,
         offset=offset,
-        include_archived=include_archived,
+        include_archived=is_archived,
         include_deleted=False,
     )
     return [_doc_row_to_out(r) for r in rows]
@@ -131,6 +131,41 @@ async def get_document_endpoint(
     if doc is None:
         raise HTTPException(status_code=404, detail=f"Document '{doc_id}' not found")
     return _doc_row_to_out(doc)
+
+
+@router.put("/documents/{doc_id}", response_model=DocumentOut)
+async def update_document_endpoint(
+    doc_id: str,
+    body: UpdateDocumentRequest,
+    conn: Annotated[aiosqlite.Connection, Depends(get_conn)] = None,
+) -> DocumentOut:
+    """Update user-facing fields on a document (archive, favorite, tags).
+
+    Args:
+        doc_id: The document UUID.
+        body: Fields to update.
+        conn: DB connection (injected).
+
+    Returns:
+        The updated DocumentOut.
+
+    Raises:
+        HTTPException 404: If no document with the given ID exists.
+    """
+    doc = await get_document(conn, doc_id)
+    if doc is None:
+        raise HTTPException(status_code=404, detail=f"Document '{doc_id}' not found")
+
+    await update_document_user_fields(
+        conn,
+        doc_id,
+        is_archived=body.is_archived,
+        is_favorited=body.is_favorited,
+        user_tags=body.user_tags,
+    )
+
+    updated = await get_document(conn, doc_id)
+    return _doc_row_to_out(updated)
 
 
 @router.delete("/documents/{doc_id}", response_model=dict)
