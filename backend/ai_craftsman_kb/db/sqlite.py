@@ -187,6 +187,20 @@ CREATE TRIGGER IF NOT EXISTS keywords_fts_au AFTER UPDATE ON document_keywords B
     INSERT INTO keywords_fts(rowid, keyword)
     VALUES (new.rowid, new.keyword);
 END;
+
+CREATE TABLE IF NOT EXISTS llm_usage (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    timestamp       TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    provider        TEXT NOT NULL,
+    model           TEXT NOT NULL,
+    task            TEXT NOT NULL,
+    input_tokens    INTEGER,
+    output_tokens   INTEGER,
+    duration_ms     INTEGER,
+    success         BOOLEAN DEFAULT TRUE
+);
+CREATE INDEX IF NOT EXISTS idx_llm_usage_ts ON llm_usage(timestamp DESC);
+CREATE INDEX IF NOT EXISTS idx_llm_usage_provider ON llm_usage(provider, model);
 """
 
 
@@ -245,6 +259,38 @@ async def _migrate_existing_db(conn: aiosqlite.Connection) -> None:
         "ON documents(is_embedded, is_entities_extracted, is_keywords_extracted)"
     )
     await conn.commit()
+
+    # Add llm_usage table for tracking LLM token consumption.
+    # Check if the table already exists before creating it.
+    async with conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='llm_usage'"
+    ) as cursor:
+        if await cursor.fetchone() is None:
+            logger.info("Migrating: adding llm_usage table")
+            await conn.execute(
+                """
+                CREATE TABLE llm_usage (
+                    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                    timestamp       TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    provider        TEXT NOT NULL,
+                    model           TEXT NOT NULL,
+                    task            TEXT NOT NULL,
+                    input_tokens    INTEGER,
+                    output_tokens   INTEGER,
+                    duration_ms     INTEGER,
+                    success         BOOLEAN DEFAULT TRUE
+                )
+                """
+            )
+            await conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_llm_usage_ts "
+                "ON llm_usage(timestamp DESC)"
+            )
+            await conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_llm_usage_provider "
+                "ON llm_usage(provider, model)"
+            )
+            await conn.commit()
 
 
 async def init_db(data_dir: Path) -> None:
