@@ -2,6 +2,7 @@
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable
+from email.utils import parsedate_to_datetime
 from typing import TypeVar
 
 import httpx
@@ -12,6 +13,43 @@ T = TypeVar("T")
 
 # HTTP status codes considered transient/retryable
 _RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
+
+
+def _parse_retry_after(exc: httpx.HTTPStatusError) -> float | None:
+    """Extract a delay in seconds from a Retry-After response header.
+
+    Supports both numeric seconds (e.g. ``Retry-After: 5``) and HTTP-date
+    format (e.g. ``Retry-After: Thu, 01 Jan 2026 00:00:05 GMT``).
+
+    Args:
+        exc: An HTTPStatusError whose response may contain Retry-After.
+
+    Returns:
+        The number of seconds to wait, or ``None`` if the header is missing
+        or unparseable.
+    """
+    header = exc.response.headers.get("retry-after")
+    if header is None:
+        return None
+
+    # Try numeric seconds first
+    try:
+        return max(float(header), 0.0)
+    except ValueError:
+        pass
+
+    # Try HTTP-date format
+    try:
+        from datetime import datetime, timezone
+
+        target = parsedate_to_datetime(header)
+        # Ensure the parsed datetime is timezone-aware
+        if target.tzinfo is None:
+            target = target.replace(tzinfo=timezone.utc)
+        delta = (target - datetime.now(timezone.utc)).total_seconds()
+        return max(delta, 0.0)
+    except Exception:  # noqa: BLE001
+        return None
 
 
 def _is_retryable_error(exc: Exception) -> bool:
@@ -79,7 +117,19 @@ async def with_retry(
                 )
                 raise
 
-            delay = min(base_delay * (2 ** (attempt - 1)), max_delay)
+            # For 429 responses, prefer the server-provided Retry-After delay
+            retry_after_delay: float | None = None
+            if (
+                isinstance(exc, httpx.HTTPStatusError)
+                and exc.response.status_code == 429
+            ):
+                retry_after_delay = _parse_retry_after(exc)
+
+            if retry_after_delay is not None:
+                delay = min(retry_after_delay, max_delay)
+            else:
+                delay = min(base_delay * (2 ** (attempt - 1)), max_delay)
+
             logger.warning(
                 "%s failed (attempt %d/%d), retrying in %.1fs: %s",
                 operation_name,

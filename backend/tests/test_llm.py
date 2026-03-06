@@ -15,7 +15,7 @@ from ai_craftsman_kb.llm.anthropic_provider import AnthropicProvider
 from ai_craftsman_kb.llm.ollama_provider import OllamaProvider
 from ai_craftsman_kb.llm.openai_provider import OpenAIProvider
 from ai_craftsman_kb.llm.openrouter_provider import OpenRouterProvider
-from ai_craftsman_kb.llm.retry import _is_retryable_error, with_retry
+from ai_craftsman_kb.llm.retry import _is_retryable_error, _parse_retry_after, with_retry
 
 
 # ---------------------------------------------------------------------------
@@ -545,3 +545,178 @@ def test_is_retryable_error_client_error() -> None:
 def test_is_retryable_error_value_error() -> None:
     """_is_retryable_error returns False for non-HTTP errors."""
     assert _is_retryable_error(ValueError("nope")) is False
+
+
+# ---------------------------------------------------------------------------
+# Retry-After header parsing tests
+# ---------------------------------------------------------------------------
+
+
+def _make_429_error(headers: dict[str, str] | None = None) -> httpx.HTTPStatusError:
+    """Build a 429 HTTPStatusError with optional headers."""
+    response = MagicMock(spec=httpx.Response)
+    response.status_code = 429
+    response.headers = headers or {}
+    return httpx.HTTPStatusError("rate limit", request=MagicMock(), response=response)
+
+
+def test_parse_retry_after_numeric() -> None:
+    """_parse_retry_after extracts numeric seconds from header."""
+    exc = _make_429_error({"retry-after": "5"})
+    assert _parse_retry_after(exc) == 5.0
+
+
+def test_parse_retry_after_float() -> None:
+    """_parse_retry_after handles float values in the header."""
+    exc = _make_429_error({"retry-after": "2.5"})
+    assert _parse_retry_after(exc) == 2.5
+
+
+def test_parse_retry_after_missing() -> None:
+    """_parse_retry_after returns None when no header is present."""
+    exc = _make_429_error({})
+    assert _parse_retry_after(exc) is None
+
+
+def test_parse_retry_after_unparseable() -> None:
+    """_parse_retry_after returns None for garbage header values."""
+    exc = _make_429_error({"retry-after": "not-a-number-or-date"})
+    assert _parse_retry_after(exc) is None
+
+
+def test_parse_retry_after_http_date() -> None:
+    """_parse_retry_after handles HTTP-date format."""
+    from datetime import datetime, timezone
+    from email.utils import format_datetime
+
+    future = datetime.now(timezone.utc).replace(microsecond=0)
+    from datetime import timedelta
+
+    future = future + timedelta(seconds=10)
+    date_str = format_datetime(future)
+    exc = _make_429_error({"retry-after": date_str})
+    result = _parse_retry_after(exc)
+    assert result is not None
+    # Should be roughly 10 seconds (allow some tolerance for test execution time)
+    assert 8.0 <= result <= 12.0
+
+
+def test_parse_retry_after_negative_clamped() -> None:
+    """_parse_retry_after clamps negative values to 0."""
+    exc = _make_429_error({"retry-after": "-5"})
+    assert _parse_retry_after(exc) == 0.0
+
+
+@pytest.mark.asyncio
+async def test_retry_uses_retry_after_header_on_429() -> None:
+    """with_retry uses Retry-After header delay instead of exponential backoff for 429."""
+    call_count = 0
+    sleep_delays: list[float] = []
+
+    response = MagicMock(spec=httpx.Response)
+    response.status_code = 429
+    response.headers = {"retry-after": "7"}
+
+    async def _fn() -> str:
+        nonlocal call_count
+        call_count += 1
+        if call_count < 2:
+            raise httpx.HTTPStatusError("rate limit", request=MagicMock(), response=response)
+        return "ok"
+
+    async def mock_sleep(delay: float) -> None:
+        sleep_delays.append(delay)
+
+    with patch("ai_craftsman_kb.llm.retry.asyncio.sleep", side_effect=mock_sleep):
+        result = await with_retry(_fn, max_attempts=3, base_delay=1.0, operation_name="test")
+
+    assert result == "ok"
+    assert call_count == 2
+    # Should have used the Retry-After value (7) instead of exponential (1.0)
+    assert sleep_delays == [7.0]
+
+
+@pytest.mark.asyncio
+async def test_retry_falls_back_to_exponential_on_429_without_header() -> None:
+    """with_retry uses exponential backoff for 429 when Retry-After is absent."""
+    call_count = 0
+    sleep_delays: list[float] = []
+
+    response = MagicMock(spec=httpx.Response)
+    response.status_code = 429
+    response.headers = {}  # No Retry-After header
+
+    async def _fn() -> str:
+        nonlocal call_count
+        call_count += 1
+        if call_count < 2:
+            raise httpx.HTTPStatusError("rate limit", request=MagicMock(), response=response)
+        return "ok"
+
+    async def mock_sleep(delay: float) -> None:
+        sleep_delays.append(delay)
+
+    with patch("ai_craftsman_kb.llm.retry.asyncio.sleep", side_effect=mock_sleep):
+        result = await with_retry(_fn, max_attempts=3, base_delay=1.0, operation_name="test")
+
+    assert result == "ok"
+    # Should have used exponential backoff: base_delay * 2^0 = 1.0
+    assert sleep_delays == [1.0]
+
+
+@pytest.mark.asyncio
+async def test_retry_exponential_backoff_unchanged_for_5xx() -> None:
+    """with_retry still uses exponential backoff for 500-series errors."""
+    call_count = 0
+    sleep_delays: list[float] = []
+
+    response = MagicMock(spec=httpx.Response)
+    response.status_code = 503
+    response.headers = {"retry-after": "99"}  # Should be ignored for non-429
+
+    async def _fn() -> str:
+        nonlocal call_count
+        call_count += 1
+        if call_count < 3:
+            raise httpx.HTTPStatusError("unavailable", request=MagicMock(), response=response)
+        return "ok"
+
+    async def mock_sleep(delay: float) -> None:
+        sleep_delays.append(delay)
+
+    with patch("ai_craftsman_kb.llm.retry.asyncio.sleep", side_effect=mock_sleep):
+        result = await with_retry(_fn, max_attempts=3, base_delay=1.0, operation_name="test")
+
+    assert result == "ok"
+    # Should use exponential backoff: 1.0, 2.0
+    assert sleep_delays == [1.0, 2.0]
+
+
+@pytest.mark.asyncio
+async def test_retry_after_capped_by_max_delay() -> None:
+    """with_retry caps Retry-After delay at max_delay."""
+    call_count = 0
+    sleep_delays: list[float] = []
+
+    response = MagicMock(spec=httpx.Response)
+    response.status_code = 429
+    response.headers = {"retry-after": "120"}
+
+    async def _fn() -> str:
+        nonlocal call_count
+        call_count += 1
+        if call_count < 2:
+            raise httpx.HTTPStatusError("rate limit", request=MagicMock(), response=response)
+        return "ok"
+
+    async def mock_sleep(delay: float) -> None:
+        sleep_delays.append(delay)
+
+    with patch("ai_craftsman_kb.llm.retry.asyncio.sleep", side_effect=mock_sleep):
+        result = await with_retry(
+            _fn, max_attempts=3, base_delay=1.0, max_delay=30.0, operation_name="test"
+        )
+
+    assert result == "ok"
+    # Retry-After is 120 but max_delay is 30, so should be capped
+    assert sleep_delays == [30.0]
