@@ -6,5 +6,6 @@ dispatches tasks to the correct provider based on settings.yaml config.
 from .base import CompletionResult, LLMProvider
 from .rate_limiter import AsyncRateLimiter
 from .router import LLMRouter
+from .usage_tracker import UsageTracker
 
-__all__ = ["AsyncRateLimiter", "CompletionResult", "LLMProvider", "LLMRouter"]
+__all__ = ["AsyncRateLimiter", "CompletionResult", "LLMProvider", "LLMRouter", "UsageTracker"]
