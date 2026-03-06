@@ -4,13 +4,15 @@ All external API calls are mocked; no network access is required.
 """
 from __future__ import annotations
 
+import asyncio
+import time
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
 
-from ai_craftsman_kb.llm import LLMProvider, LLMRouter
+from ai_craftsman_kb.llm import AsyncRateLimiter, LLMProvider, LLMRouter
 from ai_craftsman_kb.llm.anthropic_provider import AnthropicProvider
 from ai_craftsman_kb.llm.ollama_provider import OllamaProvider
 from ai_craftsman_kb.llm.openai_provider import OpenAIProvider
@@ -720,3 +722,75 @@ async def test_retry_after_capped_by_max_delay() -> None:
     assert result == "ok"
     # Retry-After is 120 but max_delay is 30, so should be capped
     assert sleep_delays == [30.0]
+
+
+# ---------------------------------------------------------------------------
+# AsyncRateLimiter tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_rate_limiter_first_acquire_immediate() -> None:
+    """First acquire() should return immediately without sleeping."""
+    limiter = AsyncRateLimiter(rpm=60)
+    with patch("ai_craftsman_kb.llm.rate_limiter.asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
+        await limiter.acquire()
+    mock_sleep.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_rate_limiter_sleeps_when_called_too_fast() -> None:
+    """Second acquire() should sleep when called before the interval elapses."""
+    limiter = AsyncRateLimiter(rpm=60)  # 1 second interval
+
+    with patch("ai_craftsman_kb.llm.rate_limiter.asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
+        # Simulate first call already happened recently
+        limiter._last_request = time.monotonic()
+        await limiter.acquire()
+
+    mock_sleep.assert_called_once()
+    # The sleep duration should be close to 1.0 second
+    sleep_duration = mock_sleep.call_args[0][0]
+    assert 0.0 < sleep_duration <= 1.0
+
+
+@pytest.mark.asyncio
+async def test_rate_limiter_no_sleep_after_interval() -> None:
+    """acquire() should not sleep if enough time has elapsed."""
+    limiter = AsyncRateLimiter(rpm=60)  # 1 second interval
+
+    with patch("ai_craftsman_kb.llm.rate_limiter.asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
+        # Simulate last request was long ago
+        limiter._last_request = time.monotonic() - 5.0
+        await limiter.acquire()
+
+    mock_sleep.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_rate_limiter_serialises_concurrent_callers() -> None:
+    """Multiple concurrent acquire() calls should be serialised by the lock."""
+    limiter = AsyncRateLimiter(rpm=600)  # 0.1 second interval
+    timestamps: list[float] = []
+
+    async def _record_acquire() -> None:
+        await limiter.acquire()
+        timestamps.append(time.monotonic())
+
+    # Launch 3 concurrent acquires
+    await asyncio.gather(_record_acquire(), _record_acquire(), _record_acquire())
+
+    # All 3 should have completed
+    assert len(timestamps) == 3
+
+
+@pytest.mark.asyncio
+async def test_rate_limiter_updates_last_request() -> None:
+    """acquire() should update _last_request after completing."""
+    limiter = AsyncRateLimiter(rpm=120)
+    assert limiter._last_request == 0.0
+
+    with patch("ai_craftsman_kb.llm.rate_limiter.asyncio.sleep", new_callable=AsyncMock):
+        await limiter.acquire()
+
+    assert limiter._last_request > 0.0
