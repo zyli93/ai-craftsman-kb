@@ -31,6 +31,7 @@ export function useSearch(
         q: query,
         mode,
         source_type: filters.source_type,
+        since: filters.since,
         limit: filters.limit ?? 20,
       }),
     enabled: query.length > 0,

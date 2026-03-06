@@ -55,8 +55,10 @@ import type { Document } from '@/api/types'
 
 const PAGE_SIZE = 25
 
+const ALL_FILTER = '__all__'
+
 const SOURCE_OPTIONS = [
-  { label: 'All Sources', value: '' },
+  { label: 'All Sources', value: ALL_FILTER },
   { label: 'Hacker News', value: 'hn' },
   { label: 'Reddit', value: 'reddit' },
   { label: 'ArXiv', value: 'arxiv' },
@@ -67,7 +69,7 @@ const SOURCE_OPTIONS = [
 ]
 
 const ORIGIN_OPTIONS = [
-  { label: 'All Origins', value: '' },
+  { label: 'All Origins', value: ALL_FILTER },
   { label: 'Pro', value: 'pro' },
   { label: 'Radar', value: 'radar' },
   { label: 'Adhoc', value: 'adhoc' },
@@ -480,8 +482,8 @@ export function DocumentsPage() {
   const queryClient = useQueryClient()
 
   // Filter state
-  const [sourceFilter, setSourceFilter] = useState<string>('')
-  const [originFilter, setOriginFilter] = useState<string>('')
+  const [sourceFilter, setSourceFilter] = useState<string>(ALL_FILTER)
+  const [originFilter, setOriginFilter] = useState<string>(ALL_FILTER)
   const [showArchived, setShowArchived] = useState(false)
 
   // Pagination
@@ -508,8 +510,8 @@ export function DocumentsPage() {
         limit: PAGE_SIZE,
         offset: page * PAGE_SIZE,
       }
-      if (sourceFilter) params.source_type = sourceFilter
-      if (originFilter) params.origin = originFilter
+      if (sourceFilter !== ALL_FILTER) params.source_type = sourceFilter
+      if (originFilter !== ALL_FILTER) params.origin = originFilter
       if (showArchived) params.is_archived = true
       return api.documents.list(params)
     },
@@ -774,7 +776,7 @@ export function DocumentsPage() {
         {!isFetching && !isError && displayDocs.length === 0 && (
           <div className="px-4 py-16 text-center">
             <p className="text-muted-foreground">No documents found.</p>
-            {(sourceFilter || originFilter || showArchived) && (
+            {(sourceFilter !== ALL_FILTER || originFilter !== ALL_FILTER || showArchived) && (
               <p className="mt-1 text-sm text-muted-foreground">
                 Try adjusting your filters.
               </p>

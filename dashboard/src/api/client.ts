@@ -95,6 +95,7 @@ export const api = {
     q: string
     mode?: string
     source_type?: string
+    since?: string
     limit?: number
   }) => get<SearchResult[]>('/api/search', params as Record<string, string | number | boolean>),
 

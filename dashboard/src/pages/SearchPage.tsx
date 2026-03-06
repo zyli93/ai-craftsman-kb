@@ -38,8 +38,11 @@ import type { Document } from '@/api/types'
 
 type ActiveTab = 'pro' | 'radar' | 'adhoc'
 
+const ALL_SOURCES = '__all__'
+const ALL_SINCE = '__all__'
+
 const SOURCE_OPTIONS = [
-  { label: 'All Sources', value: '' },
+  { label: 'All Sources', value: ALL_SOURCES },
   { label: 'Hacker News', value: 'hn' },
   { label: 'Reddit', value: 'reddit' },
   { label: 'ArXiv', value: 'arxiv' },
@@ -50,7 +53,7 @@ const SOURCE_OPTIONS = [
 ]
 
 const SINCE_OPTIONS = [
-  { label: 'Any time', value: '' },
+  { label: 'Any time', value: ALL_SINCE },
   { label: 'Past week', value: '7d' },
   { label: 'Past month', value: '30d' },
   { label: 'Past 3 months', value: '90d' },
@@ -244,14 +247,27 @@ export function SearchPage() {
   const [inputValue, setInputValue] = useState('')
   const [submittedQuery, setSubmittedQuery] = useState('')
   const [mode, setMode] = useState<SearchMode>('hybrid')
-  const [sourceFilter, setSourceFilter] = useState<string>('')
-  const [sinceFilter, setSinceFilter] = useState<string>('')
+  const [sourceFilter, setSourceFilter] = useState<string>(ALL_SOURCES)
+  const [sinceFilter, setSinceFilter] = useState<string>(ALL_SINCE)
   const [activeTab, setActiveTab] = useState<ActiveTab>('pro')
+
+  // Convert relative "7d"/"30d"/"90d" into ISO date strings for the backend
+  const sinceDate = (() => {
+    if (sinceFilter === ALL_SINCE) return undefined
+    const match = sinceFilter.match(/^(\d+)d$/)
+    if (!match) return undefined
+    const d = new Date()
+    d.setDate(d.getDate() - Number(match[1]))
+    return d.toISOString().split('T')[0]
+  })()
 
   const { data: results, isFetching, isError } = useSearch(
     submittedQuery,
     mode,
-    { source_type: sourceFilter || undefined },
+    {
+      source_type: sourceFilter !== ALL_SOURCES ? sourceFilter : undefined,
+      since: sinceDate,
+    },
   )
 
   const handleSubmit = useCallback(() => {
