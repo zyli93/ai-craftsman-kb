@@ -111,6 +111,33 @@ export interface RadarSearchRequest {
   limit_per_source?: number
 }
 
+export interface UsageSummaryItem {
+  provider: string
+  model: string
+  task: string
+  total_input_tokens: number
+  total_output_tokens: number
+  request_count: number
+}
+
+export interface UsageSummary {
+  summary: UsageSummaryItem[]
+  period_start: string
+  period_end: string
+}
+
+export interface UsageRecord {
+  id: number
+  timestamp: string
+  provider: string
+  model: string
+  task: string
+  input_tokens: number | null
+  output_tokens: number | null
+  duration_ms: number | null
+  success: boolean
+}
+
 export interface DiscoveredSource {
   id: string
   source_type: string

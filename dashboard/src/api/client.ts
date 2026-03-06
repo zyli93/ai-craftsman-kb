@@ -18,6 +18,8 @@ import type {
   IngestProRequest,
   RadarSearchRequest,
   DiscoveredSource,
+  UsageSummary,
+  UsageRecord,
 } from './types'
 
 async function get<T>(
@@ -117,6 +119,13 @@ export const api = {
     create: (body: BriefingCreate) => post<Briefing>('/api/briefings', body),
     get: (id: string) => get<Briefing>(`/api/briefings/${id}`),
     delete: (id: string) => del<void>(`/api/briefings/${id}`),
+  },
+
+  usage: {
+    summary: (params?: { since?: string }) =>
+      get<UsageSummary>('/api/usage', params as Record<string, string | number | boolean>),
+    recent: (params?: { limit?: number }) =>
+      get<UsageRecord[]>('/api/usage/recent', params as Record<string, string | number | boolean>),
   },
 
   discover: {

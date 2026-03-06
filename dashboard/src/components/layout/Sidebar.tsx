@@ -6,6 +6,7 @@ import {
   Network,
   FileText,
   BookOpen,
+  Activity,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
@@ -16,6 +17,7 @@ const navItems = [
   { to: '/entities', label: 'Entities', icon: Network },
   { to: '/documents', label: 'Documents', icon: FileText },
   { to: '/briefing', label: 'Briefing', icon: BookOpen },
+  { to: '/usage', label: 'LLM Usage', icon: Activity },
 ]
 
 export function Sidebar() {
