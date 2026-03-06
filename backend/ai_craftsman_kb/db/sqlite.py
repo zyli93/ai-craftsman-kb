@@ -307,10 +307,9 @@ async def init_db(data_dir: Path) -> None:
         data_dir: Directory where the craftsman.db file will be stored.
     """
     async with get_db(data_dir) as conn:
-        # Run migrations first on existing databases so that the full
-        # SCHEMA_SQL (which references new columns) does not conflict.
-        await _migrate_existing_db(conn)
-        # executescript runs the full DDL in a single transaction
+        # Create all tables first (IF NOT EXISTS), then run migrations
+        # for any schema changes on pre-existing databases.
         await conn.executescript(SCHEMA_SQL)
         await conn.commit()
+        await _migrate_existing_db(conn)
     logger.info("Database initialized at %s", data_dir / "craftsman.db")
