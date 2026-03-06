@@ -18,6 +18,7 @@ import type {
   IngestProRequest,
   RadarSearchRequest,
   DiscoveredSource,
+  DiscoverListResponse,
   UsageSummary,
   UsageRecord,
 } from './types'
@@ -52,6 +53,16 @@ async function put<T>(path: string, body?: unknown): Promise<T> {
     body: body !== undefined ? JSON.stringify(body) : undefined,
   })
   if (!res.ok) throw new Error(`PUT ${path} failed: ${res.status}`)
+  return res.json() as Promise<T>
+}
+
+async function patch<T>(path: string, body?: unknown): Promise<T> {
+  const res = await fetch(path, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+  })
+  if (!res.ok) throw new Error(`PATCH ${path} failed: ${res.status}`)
   return res.json() as Promise<T>
 }
 
@@ -129,7 +140,9 @@ export const api = {
   },
 
   discover: {
-    list: () => get<DiscoveredSource[]>('/api/discover'),
-    dismiss: (id: string) => put<DiscoveredSource>(`/api/discover/${id}`, { status: 'dismissed' }),
+    list: (params?: { status?: string }) =>
+      get<DiscoverListResponse>('/api/discover', params as Record<string, string | number | boolean>),
+    updateStatus: (id: string, status: string) =>
+      patch<DiscoveredSource>(`/api/discover/${id}`, { status }),
   },
 }

@@ -14,7 +14,7 @@ import {
   AlertCircle,
 } from 'lucide-react'
 import { api } from '@/api/client'
-import type { Source, DiscoveredSource } from '@/api/types'
+import type { Source } from '@/api/types'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Switch } from '@/components/ui/switch'
@@ -280,12 +280,12 @@ export function Sources() {
     queryFn: api.sources.list,
   })
 
-  const { data: discovered = [] } = useQuery({
+  const { data: discoverResponse } = useQuery({
     queryKey: ['discover'],
-    queryFn: api.discover.list,
-    // Silence errors if the discover endpoint doesn't exist yet
+    queryFn: () => api.discover.list({ status: 'suggested' }),
     retry: false,
   })
+  const discovered = discoverResponse?.items ?? []
 
   // Collect all unique source types for the filter dropdown
   const sourceTypes = Array.from(new Set(sources.map((s) => s.source_type))).sort()
@@ -416,8 +416,8 @@ export function Sources() {
       ))}
 
       {/* Discovered sources panel */}
-      {(discovered as DiscoveredSource[]).length > 0 && (
-        <DiscoveredSources discoveries={discovered as DiscoveredSource[]} />
+      {discovered.length > 0 && (
+        <DiscoveredSources discoveries={discovered} />
       )}
 
       {/* Add source dialog */}

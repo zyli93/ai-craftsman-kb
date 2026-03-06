@@ -63,17 +63,17 @@ export function DiscoveredSources({ discoveries }: DiscoveredSourcesProps) {
     },
   })
 
-  /** Dismiss a discovered source via PUT /api/discover/{id} */
+  /** Dismiss a discovered source via PATCH /api/discover/{id} */
   const dismissMutation = useMutation({
-    mutationFn: (id: string) => api.discover.dismiss(id),
+    mutationFn: (id: string) => api.discover.updateStatus(id, 'dismissed'),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['discover'] })
     },
   })
 
-  /** Filter to only show pending/suggested items that haven't been acted on */
+  /** Filter to only show suggested items that haven't been acted on */
   const pendingDiscoveries = discoveries.filter(
-    (d) => d.status === 'pending' || d.status === 'suggested',
+    (d) => d.status === 'suggested',
   )
 
   if (discoveries.length === 0) {
@@ -126,7 +126,7 @@ export function DiscoveredSources({ discoveries }: DiscoveredSourcesProps) {
                 </Badge>
 
                 {/* Confidence badge shown when confidence field is present */}
-                {discovery.confidence !== undefined && (
+                {discovery.confidence != null && (
                   <Badge
                     variant="outline"
                     className={`text-xs shrink-0 ${confidenceBadgeClass(discovery.confidence)}`}
@@ -134,27 +134,12 @@ export function DiscoveredSources({ discoveries }: DiscoveredSourcesProps) {
                     {Math.round(discovery.confidence * 100)}% confidence
                   </Badge>
                 )}
-
-                {/* Fallback: mention count for legacy entries without confidence */}
-                {discovery.confidence === undefined && discovery.mention_count > 0 && (
-                  <span className="text-xs text-muted-foreground shrink-0">
-                    found in {discovery.mention_count}{' '}
-                    {discovery.mention_count === 1 ? 'article' : 'articles'}
-                  </span>
-                )}
               </div>
 
               {/* Discovery method label */}
               {discovery.discovery_method && (
                 <p className="text-xs text-muted-foreground mt-1">
                   {DISCOVERY_METHOD_LABELS[discovery.discovery_method] ?? discovery.discovery_method}
-                </p>
-              )}
-
-              {/* Context snippet for legacy entries without discovery_method */}
-              {!discovery.discovery_method && discovery.context && (
-                <p className="text-xs text-muted-foreground mt-1 truncate">
-                  {discovery.context}
                 </p>
               )}
             </div>
