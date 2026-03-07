@@ -70,8 +70,9 @@ async def ingest_url(
     config = request.app.state.config
     db_path = request.app.state.db_path
     llm_router = request.app.state.llm_router
+    pipeline = getattr(request.app.state, "pipeline", None)
 
-    runner = IngestRunner(config=config, llm_router=llm_router, db_path=db_path)
+    runner = IngestRunner(config=config, llm_router=llm_router, db_path=db_path, pipeline=pipeline)
 
     report = await runner.ingest_url(body.url, tags=body.tags if body.tags else None)
 
@@ -122,6 +123,7 @@ async def ingest_pro(
     config = request.app.state.config
     db_path = request.app.state.db_path
     llm_router = request.app.state.llm_router
+    pipeline = getattr(request.app.state, "pipeline", None)
 
     # Validate single source if specified
     if body.source is not None and body.source not in INGESTORS:
@@ -133,7 +135,7 @@ async def ingest_pro(
             ),
         )
 
-    runner = IngestRunner(config=config, llm_router=llm_router, db_path=db_path)
+    runner = IngestRunner(config=config, llm_router=llm_router, db_path=db_path, pipeline=pipeline)
 
     if body.source is not None:
         # Run a single source

@@ -107,6 +107,40 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     else:
         app.state.llm_router = LLMRouter(config)
 
+    # Construct ProcessingPipeline for post-ingest embedding
+    try:
+        from .config.models import LLMGatewayConfig
+        from .processing.chunker import Chunker
+        from .processing.entity_extractor import EntityExtractor
+        from .processing.keyword_extractor import KeywordExtractor
+        from .processing.pipeline import ProcessingPipeline
+
+        chunker = Chunker(
+            chunk_size=config.settings.embedding.chunk_size,
+            chunk_overlap=config.settings.embedding.chunk_overlap,
+        )
+        entity_extractor = EntityExtractor(config, app.state.llm_router)
+
+        keyword_extractor = None
+        if config.settings.llm is not None:
+            if isinstance(config.settings.llm, LLMGatewayConfig):
+                if "keyword_extraction" in config.settings.llm.tasks:
+                    keyword_extractor = KeywordExtractor(config, app.state.llm_router)
+            elif config.settings.llm.keyword_extraction is not None:
+                keyword_extractor = KeywordExtractor(config, app.state.llm_router)
+
+        app.state.pipeline = ProcessingPipeline(
+            config=config,
+            embedder=app.state.embedder,
+            chunker=chunker,
+            vector_store=app.state.vector_store,
+            entity_extractor=entity_extractor,
+            keyword_extractor=keyword_extractor,
+        )
+    except Exception as e:
+        logger.warning("Could not create processing pipeline: %s", e)
+        app.state.pipeline = None
+
     logger.info("AI Craftsman KB API ready on port %d", config.settings.server.backend_port)
 
     yield  # App is running

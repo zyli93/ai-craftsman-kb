@@ -89,7 +89,46 @@ def ingest_pro(ctx: click.Context, source: str | None) -> None:
         await init_db(data_dir)
 
         llm_router = LLMRouter(config)
-        runner = IngestRunner(config, llm_router, db_path)
+
+        # Construct ProcessingPipeline for post-ingest embedding
+        from .processing.chunker import Chunker
+        from .processing.embedder import Embedder
+        from .processing.entity_extractor import EntityExtractor
+        from .processing.keyword_extractor import KeywordExtractor
+        from .processing.pipeline import ProcessingPipeline
+        from .search.vector_store import VectorStore
+
+        pipeline = None
+        try:
+            embedder = Embedder(config)
+            chunker = Chunker(
+                chunk_size=config.settings.embedding.chunk_size,
+                chunk_overlap=config.settings.embedding.chunk_overlap,
+            )
+            vector_store = VectorStore(config)
+            entity_extractor = EntityExtractor(config, llm_router)
+
+            # Only create keyword extractor if keyword_extraction is configured
+            keyword_extractor = None
+            if config.settings.llm is not None:
+                if isinstance(config.settings.llm, LLMGatewayConfig):
+                    if "keyword_extraction" in config.settings.llm.tasks:
+                        keyword_extractor = KeywordExtractor(config, llm_router)
+                elif config.settings.llm.keyword_extraction is not None:
+                    keyword_extractor = KeywordExtractor(config, llm_router)
+
+            pipeline = ProcessingPipeline(
+                config=config,
+                embedder=embedder,
+                chunker=chunker,
+                vector_store=vector_store,
+                entity_extractor=entity_extractor,
+                keyword_extractor=keyword_extractor,
+            )
+        except Exception as e:
+            logger.warning("Could not create processing pipeline: %s", e)
+
+        runner = IngestRunner(config, llm_router, db_path, pipeline=pipeline)
 
         if source:
             # Check if the requested source is disabled
