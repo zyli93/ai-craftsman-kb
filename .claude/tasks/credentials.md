@@ -22,7 +22,7 @@ Which API keys you need, why, and where to get them.
   Very cheap for filtering/extraction.
 - **Can substitute**: Change `settings.yaml` to use `ollama` with a local
   model instead (set `provider: ollama`, `model: llama3.1:8b`).
-  See `operator-guide.md` for Ollama setup.
+  See `manual.md` for Ollama setup.
 
 ---
 

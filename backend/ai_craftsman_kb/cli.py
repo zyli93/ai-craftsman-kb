@@ -819,6 +819,9 @@ async def _check_database(config: AppConfig) -> tuple[str, str]:
 async def _check_qdrant(config: AppConfig) -> tuple[str, str]:
     """Initialise VectorStore and query the collection info.
 
+    If the local Qdrant storage is locked (another process holds it, e.g. the
+    running ``cr server``), treat it as OK — the storage is in use and healthy.
+
     Args:
         config: Loaded application configuration (provides Qdrant path).
 
@@ -833,6 +836,9 @@ async def _check_qdrant(config: AppConfig) -> tuple[str, str]:
         count = info.get("vectors_count", 0)
         return ("ok", f"{count} vectors")
     except Exception as exc:
+        err_str = str(exc)
+        if "already accessed" in err_str:
+            return ("ok", "storage locked by running server (healthy)")
         return (
             "error",
             f"Qdrant unavailable: {exc}. Run `cr ingest` to initialise.",
@@ -857,9 +863,34 @@ async def _check_api_key(config: AppConfig, provider: str) -> tuple[str, str]:
         masked = pcfg.api_key[:6] + "…"
         return ("ok", f"key set ({masked})")
     if pcfg and pcfg.base_url:
+        # Key not needed but note it's a local provider (reachability checked separately)
         return ("ok", f"local provider ({pcfg.base_url})")
     env_var = f"{provider.upper()}_API_KEY"
     return ("warn", f"Not configured — run `direnv allow` or set {env_var} in ~/.ai-craftsman-kb/.env")
+
+
+async def _check_local_provider(config: AppConfig, provider: str) -> tuple[str, str]:
+    """Check that a local LLM provider (ollama, llamacpp) is reachable.
+
+    Args:
+        config: Loaded application configuration.
+        provider: Provider name ('ollama' or 'llamacpp').
+
+    Returns:
+        ('ok', url + status) or ('warn', unreachable hint).
+    """
+    pcfg = config.settings.providers.get(provider)
+    if not pcfg or not pcfg.base_url:
+        return ("warn", f"Not configured — add {provider}.base_url to settings.yaml")
+    url = pcfg.base_url.rstrip("/")
+    # ollama exposes GET / or /api/tags; llamacpp exposes GET /health
+    health_path = "/health" if provider == "llamacpp" else "/"
+    try:
+        async with httpx.AsyncClient(timeout=2.0) as client:
+            resp = await client.get(f"{url}{health_path}")
+        return ("ok", f"reachable at {url} (HTTP {resp.status_code})")
+    except Exception:
+        return ("warn", f"not reachable at {url} — start the {provider} server")
 
 
 async def _check_youtube_key(config: AppConfig) -> tuple[str, str]:
@@ -1090,43 +1121,110 @@ async def _run_doctor(config: AppConfig) -> None:
         else:
             console.print(f"  [yellow]⚠[/yellow] {str(path):<50s} {description} (missing)")
 
-    # ── Health checks ─────────────────────────────────────────────────────
-    console.print("\n[bold]Health Checks[/bold]")
-    checks: list[tuple[str, Any]] = [
-        ("LLM routing", _check_llm_config(config)),
-        ("SQLite DB", _check_database(config)),
-        ("Qdrant", _check_qdrant(config)),
+    # ── Collect checks by section ──────────────────────────────────────────
+    # Each section is a list of (name, coroutine) tuples.
+    local_providers = [
+        name for name, pcfg in config.settings.providers.items()
+        if pcfg.base_url and not pcfg.api_key
+    ]
+
+    key_checks: list[tuple[str, Any]] = [
         *[
             (f"{name.capitalize()} API key", _check_api_key(config, name))
             for name in config.settings.providers
+            if name not in local_providers
         ],
         ("YouTube API key", _check_youtube_key(config)),
         ("Reddit credentials", _check_reddit_credentials(config)),
-        ("Keyword extraction config", _check_keyword_extraction_config(config)),
-        ("Keyword extraction stats", _check_keyword_stats(config)),
-        ("HN connectivity", _check_hn_connectivity()),
-        ("ArXiv connectivity", _check_arxiv_connectivity()),
+    ]
+
+    service_checks: list[tuple[str, Any]] = [
+        ("SQLite DB", _check_database(config)),
+        ("Qdrant vectors", _check_qdrant(config)),
+        *[
+            (f"{name.capitalize()} server", _check_local_provider(config, name))
+            for name in local_providers
+        ],
         ("Backend server", _check_backend_server(config)),
         ("Frontend server", _check_frontend_server(config)),
+        ("HN connectivity", _check_hn_connectivity()),
+        ("ArXiv connectivity", _check_arxiv_connectivity()),
         ("Data directory", _check_data_dir(config)),
     ]
 
+    config_checks: list[tuple[str, Any]] = [
+        ("LLM routing", _check_llm_config(config)),
+        ("Keyword extraction config", _check_keyword_extraction_config(config)),
+        ("Keyword extraction stats", _check_keyword_stats(config)),
+    ]
+
+    sections: list[tuple[str, list[tuple[str, Any]]]] = [
+        ("API Keys", key_checks),
+        ("Services", service_checks),
+        ("Config", config_checks),
+    ]
+
+    # ── Run and display ──────────────────────────────────────────────────
     all_ok = True
-    for name, coro in checks:
-        try:
-            status, message = await coro
-        except Exception as exc:
-            status, message = "error", str(exc)
+    all_results: dict[str, str] = {}  # check name → status
+    for section_title, checks in sections:
+        # Run all checks in the section, collecting results
+        results: list[tuple[str, str, str]] = []
+        for name, coro in checks:
+            try:
+                status, message = await coro
+            except Exception as exc:
+                status, message = "error", str(exc)
+            results.append((name, status, message))
+            all_results[name] = status
 
-        if status == "ok":
-            icon = "[green]✓[/green]"
-        elif status == "warn":
-            icon = "[yellow]⚠[/yellow]"
-        else:
-            icon = "[red]✗[/red]"
-            all_ok = False
+        # Sort: ok first, then warn, then error
+        status_order = {"ok": 0, "warn": 1, "error": 2}
+        results.sort(key=lambda r: status_order.get(r[1], 3))
 
-        console.print(f"  {icon} {name:<30s} {message}")
+        console.print(f"\n[bold]{section_title}[/bold]")
+        for name, status, message in results:
+            if status == "ok":
+                icon = "[green]✓[/green]"
+            elif status == "warn":
+                icon = "[yellow]⚠[/yellow]"
+            else:
+                icon = "[red]✗[/red]"
+                all_ok = False
+            console.print(f"  {icon} {name:<30s} {message}")
+
+    # ── Quick-start hints for services that are down ─────────────────────
+    hints: list[str] = []
+
+    if all_results.get("Llamacpp server") != "ok":
+        model = config.settings.embedding.model
+        hints.append(
+            f"  [yellow]→[/yellow] Start llamacpp embedding server:\n"
+            f"    llama-server -m {model} --port 9990 --embedding"
+        )
+
+    if all_results.get("Qdrant vectors") not in ("ok",):
+        hints.append(
+            "  [yellow]→[/yellow] Initialise Qdrant storage:\n"
+            "    uv run cr ingest --source hn"
+        )
+
+    if all_results.get("Ollama server") != "ok":
+        hints.append(
+            "  [yellow]→[/yellow] Start Ollama:\n"
+            "    ollama serve"
+        )
+
+    if all_results.get("Backend server") != "ok":
+        hints.append(
+            "  [yellow]→[/yellow] Start backend server:\n"
+            "    uv run cr server"
+        )
+
+    if hints:
+        console.print("\n[bold]Quick Start[/bold]")
+        for hint in hints:
+            console.print(hint)
 
     if all_ok:
         console.print("\n[green]All checks passed. System ready.[/green]")

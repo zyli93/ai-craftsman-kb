@@ -48,6 +48,82 @@ OPENROUTER_API_KEY  — required for LLM filtering + entity extraction
 The remaining keys unlock optional sources (YouTube, Reddit) and features
 (briefing generation). The system degrades gracefully without them.
 
+### How env vars are loaded
+
+Credentials are stored **outside the repo** and loaded automatically via
+[direnv](https://direnv.net/).
+
+**1. Install direnv and hook it into your shell:**
+
+```bash
+brew install direnv
+
+# Add to ~/.zshrc (or ~/.bashrc):
+eval "$(direnv hook zsh)"
+```
+
+Restart your shell after adding the hook.
+
+**2. Store your keys in `~/.ai-craftsman-kb/.env`:**
+
+```bash
+mkdir -p ~/.ai-craftsman-kb
+cat > ~/.ai-craftsman-kb/.env << 'EOF'
+export OPENROUTER_API_KEY='sk-or-...'
+export YOUTUBE_API_KEY='...'
+export FIREWORKS_API_KEY='...'
+export GROQ_API_KEY='...'
+export CEREBRAS_API_KEY='...'
+EOF
+chmod 600 ~/.ai-craftsman-kb/.env
+```
+
+The file uses `export KEY=value` syntax. Add or remove keys as needed.
+
+**3. The project `.envrc` sources that file:**
+
+```bash
+# .envrc (already in the repo root, gitignored)
+source ~/.ai-craftsman-kb/.env
+```
+
+**4. Allow direnv to load it:**
+
+```bash
+cd /path/to/ai-craftsman-kb
+direnv allow
+```
+
+After this, every time you `cd` into the project, direnv automatically
+exports the keys into your shell. `uv run cr doctor` will confirm they're
+picked up.
+
+### How the config reads env vars
+
+`config/settings.yaml` references env vars with `${VAR_NAME}` placeholders:
+
+```yaml
+providers:
+  groq:
+    api_key: ${GROQ_API_KEY}
+  openrouter:
+    api_key: ${OPENROUTER_API_KEY}
+```
+
+The config loader (`config/loader.py`) interpolates these at load time by
+reading `os.environ`. As long as direnv has exported the vars into your
+shell, the CLI and server will find them.
+
+### Important notes
+
+- **`.envrc` is gitignored** — it will never be committed.
+- **Keys live in `~/.ai-craftsman-kb/.env`**, not in the repo.
+- Use `export` syntax in the `.env` file — direnv's `dotenv` command does
+  NOT support `export`, so the `.envrc` uses `source` instead.
+- After editing `~/.ai-craftsman-kb/.env`, run `direnv allow` again (or
+  re-enter the directory) to pick up changes.
+- Run `uv run cr doctor` to verify all keys are detected.
+
 ---
 
 ## Step 3 — Start Qdrant (local vector store)
@@ -92,7 +168,114 @@ and access the dashboard at `http://localhost:5173` instead.
 
 ---
 
-## Step 5 — Initialize the Database
+## Step 5 — Configure Your Sources
+
+Edit `config/sources.yaml` to choose what content you want to index.
+This is the file that controls which feeds, channels, and topics get ingested.
+
+### Hacker News (no API key needed)
+
+```yaml
+hackernews:
+  mode: top        # top | new | best
+  limit: 30        # number of stories per ingest
+```
+
+### ArXiv (no API key needed)
+
+```yaml
+arxiv:
+  queries:
+    - "cat:cs.CL AND abs:large language model"
+    - "cat:cs.AI AND abs:reinforcement learning"
+  max_results: 20  # per query
+```
+
+Use [ArXiv search syntax](https://info.arxiv.org/help/api/user-manual.html#query_details):
+`cat:` for category, `abs:` for abstract, `ti:` for title, `au:` for author.
+
+### RSS / Atom Feeds (no API key needed)
+
+```yaml
+rss:
+  - url: https://lobste.rs/rss
+    name: "Lobste.rs"
+  - url: https://openai.com/blog/rss.xml
+    name: "OpenAI Blog"
+```
+
+Any valid RSS or Atom feed URL works. Add as many as you like.
+
+### DEV.to (no API key needed)
+
+```yaml
+devto:
+  tags:
+    - ai
+    - machinelearning
+    - llm
+  limit: 20        # articles per tag
+```
+
+### Substack (no API key needed)
+
+```yaml
+substack:
+  - slug: karpathy          # from the URL: karpathy.substack.com
+    name: "Andrej Karpathy"
+  - slug: simonwillison
+    name: "Simon Willison"
+```
+
+The `slug` is the subdomain from the Substack URL (e.g. `karpathy` from `karpathy.substack.com`).
+
+### YouTube (requires `YOUTUBE_API_KEY`)
+
+```yaml
+youtube_channels:
+  - handle: "@AndrejKarpathy"   # the @handle from the channel URL
+    name: "Andrej Karpathy"
+  - handle: "@YannicKilcher"
+    name: "Yannic Kilcher"
+```
+
+### Reddit (requires `REDDIT_CLIENT_ID` + `REDDIT_CLIENT_SECRET`)
+
+```yaml
+subreddits:
+  - name: LocalLLaMA
+    sort: hot              # hot | new | top | rising
+    limit: 25
+  - name: MachineLearning
+    sort: hot
+    limit: 25
+```
+
+### Minimal Example
+
+If you just want to get started quickly with no API keys at all:
+
+```yaml
+hackernews:
+  mode: top
+  limit: 20
+
+rss:
+  - url: https://lobste.rs/rss
+    name: "Lobste.rs"
+
+devto:
+  tags:
+    - ai
+  limit: 10
+```
+
+Remove or comment out any source blocks you don't want.
+Sources with missing API keys are automatically skipped during ingest.
+
+---
+
+## Step 6 — Initialize the Database
 
 The first run of any command auto-creates the SQLite schema:
 
@@ -104,7 +287,7 @@ Expected: `0 documents`, Qdrant shows `0 vectors`. That's correct — no data ye
 
 ---
 
-## Step 6 — Health Check
+## Step 7 — Health Check
 
 ```bash
 uv run cr doctor
@@ -112,25 +295,32 @@ uv run cr doctor
 
 Expected output for a clean setup:
 ```
-  ✓ Config file          data_dir=~/.ai-craftsman-kb/data
-  ✓ SQLite DB            0 documents
-  ✓ Qdrant               0 vectors
-  ✓ OpenAI API key       key set (sk-pro…)
-  ✓ OpenRouter API key   key set (sk-or-…)
-  ⚠ Anthropic API key   Not configured — set ANTHROPIC_API_KEY (optional)
-  ⚠ YouTube API key     Not configured — set YOUTUBE_API_KEY (optional)
-  ⚠ Reddit credentials  Not configured — set REDDIT_CLIENT_ID / SECRET (optional)
-  ✓ HN connectivity      HTTP 200
-  ✓ ArXiv connectivity   HTTP 200
-  ✓ Data directory       ~/.ai-craftsman-kb/data (120.4 GB free)
+Configuration
+  Config dir:  /path/to/ai-craftsman-kb/config
+  Data dir:    /path/to/ai-craftsman-kb/data
+  ✓ .../config/settings.yaml    LLM routing, providers, embedding, server settings (1049 bytes)
+  ✓ .../config/sources.yaml     Content source definitions (HN, Reddit, YouTube, etc.) (710 bytes)
+  ✓ .../config/filters.yaml     Per-source content filtering rules (855 bytes)
+
+Health Checks
+  ✓ LLM routing                 4/4 tasks configured
+  ✓ SQLite DB                   0 documents
+  ✓ Qdrant                      0 vectors
+  ✓ Openrouter API key          key set (sk-or-…)
+  ⚠ Anthropic API key           Not configured — set ANTHROPIC_API_KEY (optional)
+  ⚠ YouTube API key             Not configured — set YOUTUBE_API_KEY (optional)
+  ✓ Ollama API key              local provider (http://localhost:11434)
+  ✓ HN connectivity             HTTP 200
+  ✓ ArXiv connectivity          HTTP 200
+  ✓ Data directory              /path/to/ai-craftsman-kb/data (120.4 GB free)
 ```
 
-Warnings (⚠) are fine — they mean optional sources are disabled.
+Warnings (⚠) are fine — they mean optional sources/providers are not configured.
 Errors (✗) must be fixed before proceeding.
 
 ---
 
-## Step 7 — First Ingest
+## Step 8 — First Ingest
 
 Start with sources that need no credentials:
 
@@ -155,7 +345,7 @@ uv run cr search "large language models"
 
 ---
 
-## Step 8 — Launch the Web Dashboard
+## Step 9 — Launch the Web Dashboard
 
 ```bash
 uv run cr server
@@ -172,7 +362,7 @@ cd dashboard && pnpm dev
 
 ---
 
-## Step 9 (Optional) — MCP Server for Claude Desktop
+## Step 10 (Optional) — MCP Server for Claude Desktop
 
 Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 
@@ -210,11 +400,12 @@ Restart Claude Desktop. The KB tools will appear in Claude's tool list.
 
 | Item | Path |
 |------|------|
-| SQLite database | `~/.ai-craftsman-kb/data/craftsman.db` |
+| SQLite database | `./data/craftsman.db` |
 | Qdrant vectors | wherever you mounted `qdrant_storage` |
-| Config (settings) | `~/.ai-craftsman-kb/settings.yaml` |
-| Config (sources) | `~/.ai-craftsman-kb/sources.yaml` |
-| Credentials | `~/.ai-craftsman-kb/.env` (see vault.md) |
+| Config (settings) | `config/settings.yaml` |
+| Config (sources) | `config/sources.yaml` |
+| Config (filters) | `config/filters.yaml` |
+| Credentials | `~/.ai-craftsman-kb/.env` (loaded by direnv via `.envrc`) |
 
-On first run, if `~/.ai-craftsman-kb/` doesn't exist, the system falls back
-to the repo's `config/` directory for defaults.
+All paths are relative to the project root. Run `uv run cr doctor` to see
+absolute paths for your setup.
