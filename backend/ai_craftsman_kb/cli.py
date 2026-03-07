@@ -88,6 +88,8 @@ def ingest_pro(ctx: click.Context, source: str | None) -> None:
         # Ensure DB schema is up to date before ingestion
         await init_db(data_dir)
 
+        await _preflight_check(config)
+
         llm_router = LLMRouter(config)
 
         # Construct ProcessingPipeline for post-ingest embedding
@@ -730,6 +732,50 @@ def stats(ctx: click.Context) -> None:
 
 
 
+async def _preflight_check(config: AppConfig) -> None:
+    """Run pre-flight health checks before ingestion.
+
+    Checks Qdrant, embedding server, and LLM config. Prints warnings
+    and asks the user to confirm if any issues are found.
+    """
+    checks: list[tuple[str, Any]] = [
+        ("Qdrant", _check_qdrant(config)),
+        ("LLM routing", _check_llm_config(config)),
+    ]
+
+    # Check embedding server based on provider
+    provider = config.settings.embedding.provider
+    if provider == "llamacpp":
+        # Get base_url from llamacpp provider config, fallback to default
+        pcfg = config.settings.providers.get("llamacpp")
+        base_url = pcfg.base_url if pcfg and pcfg.base_url else "http://localhost:9990"
+        checks.append(("Embedding server (llamacpp)", _check_connectivity(f"{base_url}/health", "llamacpp")))
+    elif provider == "openai":
+        checks.append(("Embedding API key (OpenAI)", _check_api_key(config, "openai")))
+
+    warnings = []
+    for name, coro in checks:
+        try:
+            status, message = await coro
+        except Exception as exc:
+            status, message = "error", str(exc)
+
+        if status == "ok":
+            icon = "[green]\u2713[/green]"
+        elif status == "warn":
+            icon = "[yellow]\u26a0[/yellow]"
+            warnings.append(f"{name}: {message}")
+        else:
+            icon = "[red]\u2717[/red]"
+            warnings.append(f"{name}: {message}")
+
+        console.print(f"  {icon} {name:<30s} {message}")
+
+    if warnings:
+        if not click.confirm("\n  Continue with ingestion?", default=True):
+            raise SystemExit(0)
+
+
 async def _check_llm_config(config: AppConfig) -> tuple[str, str]:
     """Check that the LLM routing section is present in settings.yaml."""
     if config.settings.llm is None:
@@ -813,7 +859,7 @@ async def _check_api_key(config: AppConfig, provider: str) -> tuple[str, str]:
     if pcfg and pcfg.base_url:
         return ("ok", f"local provider ({pcfg.base_url})")
     env_var = f"{provider.upper()}_API_KEY"
-    return ("warn", f"Not configured — set {env_var} or add to settings.yaml")
+    return ("warn", f"Not configured — run `direnv allow` or set {env_var} in ~/.ai-craftsman-kb/.env")
 
 
 async def _check_youtube_key(config: AppConfig) -> tuple[str, str]:
@@ -829,7 +875,7 @@ async def _check_youtube_key(config: AppConfig) -> tuple[str, str]:
     if yt.api_key:
         masked = yt.api_key[:6] + "…"
         return ("ok", f"key set ({masked})")
-    return ("warn", "Not configured — set YOUTUBE_API_KEY or add to settings.yaml")
+    return ("warn", "Not configured — run `direnv allow` or set YOUTUBE_API_KEY in ~/.ai-craftsman-kb/.env")
 
 
 async def _check_reddit_credentials(config: AppConfig) -> tuple[str, str]:
@@ -852,7 +898,7 @@ async def _check_reddit_credentials(config: AppConfig) -> tuple[str, str]:
         missing.append("REDDIT_CLIENT_SECRET")
     return (
         "warn",
-        f"Not configured — set {', '.join(missing)} or add to settings.yaml",
+        f"Not configured — run `direnv allow` or set {', '.join(missing)} in ~/.ai-craftsman-kb/.env",
     )
 
 
@@ -961,6 +1007,30 @@ async def _check_keyword_stats(config: AppConfig) -> tuple[str, str]:
         return ("warn", f"Cannot query keyword stats: {exc}")
 
 
+async def _check_backend_server(config: AppConfig) -> tuple[str, str]:
+    """Check if the backend API server is running."""
+    port = config.settings.server.backend_port
+    url = f"http://localhost:{port}/api/health"
+    try:
+        async with httpx.AsyncClient(timeout=2.0) as client:
+            resp = await client.get(url)
+        return ("ok", f"running on port {port} (HTTP {resp.status_code})")
+    except Exception:
+        return ("warn", f"not reachable on port {port} — run `cr server` to start")
+
+
+async def _check_frontend_server(config: AppConfig) -> tuple[str, str]:
+    """Check if the frontend dev server is running."""
+    port = config.settings.server.dashboard_port
+    url = f"http://localhost:{port}/"
+    try:
+        async with httpx.AsyncClient(timeout=2.0) as client:
+            resp = await client.get(url)
+        return ("ok", f"running on port {port} (HTTP {resp.status_code})")
+    except Exception:
+        return ("warn", f"not reachable on port {port} — run `cd dashboard && pnpm dev` to start")
+
+
 async def _check_data_dir(config: AppConfig) -> tuple[str, str]:
     """Check that the data directory exists (or can be created) and is writable.
 
@@ -1036,6 +1106,8 @@ async def _run_doctor(config: AppConfig) -> None:
         ("Keyword extraction stats", _check_keyword_stats(config)),
         ("HN connectivity", _check_hn_connectivity()),
         ("ArXiv connectivity", _check_arxiv_connectivity()),
+        ("Backend server", _check_backend_server(config)),
+        ("Frontend server", _check_frontend_server(config)),
         ("Data directory", _check_data_dir(config)),
     ]
 
