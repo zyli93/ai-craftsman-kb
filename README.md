@@ -91,7 +91,7 @@ cr mcp                 # Start MCP server (stdio)
 - **Dashboard**: TypeScript, React, Vite, Tailwind CSS v4, shadcn/ui
 - **MCP Server**: Python MCP SDK, stdio transport
 
-See [plan.md](.claude/tasks/plan.md) for full architecture documentation.
+See [doc/manual.md](doc/manual.md) for full operational guide and CLI reference.
 
 ## Development
 

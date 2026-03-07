@@ -12,11 +12,11 @@ Two modes: Pro (subscription pulls) and Radar (on-demand topic search).
 - Package management: `uv` for Python, `pnpm` for dashboard
 
 ## Project Structure
-See plan.md for full architecture. Key directories:
+Key directories:
 - `backend/ai_craftsman_kb/` — Python backend
 - `dashboard/` — React frontend
 - `config/` — Default YAML configs
-- `.claude/tasks/` — Task tracking files
+- `doc/` — Setup guide, manual, credentials, vault
 
 ## Coding Standards
 - Python: Use type hints everywhere. Pydantic models for data. Async where possible.
@@ -27,9 +27,14 @@ See plan.md for full architecture. Key directories:
 - Each module should be independently testable.
 
 ## Key Commands
-- `uv run python -m ai_craftsman_kb.cli ingest pro` — run pro ingestion
-- `uv run python -m ai_craftsman_kb.cli search "query"` — search
+- `uv run cr --help` — list all CLI commands
+- `uv run cr ingest` — run pro ingestion
+- `uv run cr search "query"` — search
+- `uv run cr doctor` — health check
+- `uv run cr server` — start backend + dashboard
 - `cd dashboard && pnpm dev` — start dashboard dev server
+
+See `doc/manual.md` for full CLI reference and operational guide.
 
 ## Git Workflow
 
@@ -54,20 +59,13 @@ uv run pytest backend/tests/ -v        # backend
 # 2. Push branch to remote
 git push origin task/XX-short-description
 
-# 3. Mark ✅ done in STATUS.md, commit + push on branch
-git add .claude/tasks/STATUS.md
-git commit -m "status: mark task_XX as done"
-git push origin task/XX-short-description
-
-# 4. Delete local worktree branch
+# 3. Delete local worktree branch
 git checkout main
 git branch -d worktree-<agent-id>
 ```
 
 **Main agent** merges each branch individually — NEVER batch multiple tasks into one merge:
 ```bash
-# Repeat this block once per task, sequentially:
-
 # 1. Fetch and rebase onto latest main
 git fetch origin
 git checkout main && git pull origin main
@@ -79,7 +77,7 @@ If rebase conflicts:
 1. Read both sides to understand what changed
 2. Keep the more complete/correct version, preserving changes from both sides
 3. `git add <resolved-file>` then `git rebase --continue`
-4. If too complex: `git rebase --abort`, mark task ❌ blocked in STATUS.md, report
+4. If too complex: `git rebase --abort`, report to user
 
 ```bash
 # 2. Fast-forward merge — preserves individual commits from the branch
@@ -90,13 +88,6 @@ git push origin main
 # 3. Delete remote and local branch
 git push origin --delete task/XX-short-description
 git branch -d task/XX-short-description
-
-# 4. Mark 🔀 merged in STATUS.md, commit + push
-git add .claude/tasks/STATUS.md
-git commit -m "status: mark task_XX as merged"
-git push origin main
-
-# Then move on to the next ✅ done branch
 ```
 
 ### Branch cleanup — stale branches:
@@ -114,30 +105,15 @@ git branch --merged main | grep -v "^\* main" | xargs git branch -d
 - Leave unresolved conflicts
 - Leave any branch (local or remote) open after work is complete
 
-## Current Status
-Check .claude/tasks/STATUS.md for task status tracker.
-
-## Task Files
-Each task is defined in `.claude/tasks/task_XX.md`. Read the task file
-before starting work. Update STATUS.md when you begin and complete a task.
-
 ## Context Management
 
 **One task per context window.** Clear context after each task completes.
 
-- All project state lives in files (STATUS.md, CLAUDE.md, task files, code)
+- All project state lives in files (CLAUDE.md, doc/, code)
 - Never rely on remembering code from earlier in the conversation — always re-read
 - Stale context causes drift: hallucinated file contents, wrong assumptions, inconsistencies
-- Worktree-isolated subagents already get fresh context per task — persistent sessions should behave the same way
-
-Pattern:
-```
-start task → read task file → read relevant source files → implement → push → CLEAR
-```
 
 ## IMPORTANT
-- Read plan.md for full architecture details before starting any task.
-- Read the specific task file completely before writing any code.
+- Read `doc/manual.md` for operational details.
 - Make atomic git commits with conventional commit messages.
 - Do NOT modify files outside your task's scope.
-- Update STATUS.md when starting and completing tasks.
