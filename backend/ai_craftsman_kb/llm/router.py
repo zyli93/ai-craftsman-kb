@@ -211,7 +211,11 @@ class LLMRouter:
         for ep_name, ep_cfg in gw_cfg.endpoints.items():
             rpm = ep_cfg.rate_limit or 60.0
             limiter = AsyncRateLimiter(rpm=rpm, daily_limit=ep_cfg.daily_limit)
-            provider = self._build_provider(ep_cfg.provider, ep_cfg.model)
+            try:
+                provider = self._build_provider(ep_cfg.provider, ep_cfg.model)
+            except ValueError as exc:
+                logger.warning("Skipping endpoint '%s': %s", ep_name, exc)
+                continue
             managed[ep_name] = ManagedEndpoint(
                 name=ep_name,
                 provider_name=ep_cfg.provider,
@@ -220,10 +224,12 @@ class LLMRouter:
                 rate_limiter=limiter,
             )
 
-        # Create pools
+        # Create pools (skip endpoints that failed to build)
         pools: dict[str, EndpointPool] = {}
         for pool_name, pool_cfg in gw_cfg.pools.items():
-            eps = [managed[ep_name] for ep_name in pool_cfg.endpoints]
+            eps = [managed[ep_name] for ep_name in pool_cfg.endpoints if ep_name in managed]
+            if not eps:
+                logger.warning("Pool '%s' has no available endpoints — all skipped", pool_name)
             pools[pool_name] = EndpointPool(
                 name=pool_name,
                 endpoints=eps,
