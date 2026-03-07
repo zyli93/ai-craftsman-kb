@@ -1198,9 +1198,13 @@ async def _run_doctor(config: AppConfig) -> None:
 
     if all_results.get("Llamacpp server") != "ok":
         model = config.settings.embedding.model
+        # Resolve model path: check models/ subdir relative to cwd, then bare name
+        model_path = Path("models") / model
+        if not model_path.exists():
+            model_path = Path(model)  # fall back to bare name
         hints.append(
             f"  [yellow]→[/yellow] Start llamacpp embedding server:\n"
-            f"    llama-server -m {model} --port 9990 --embedding"
+            f"    llama-server -m {model_path} --port 9990 --embedding"
         )
 
     if all_results.get("Qdrant vectors") not in ("ok",):
