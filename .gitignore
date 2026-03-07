@@ -48,6 +48,9 @@ data/
 *.db-wal
 qdrant_storage/
 
+# Models (large binary files)
+models/
+
 # Secrets
 *.pem
 *.key
