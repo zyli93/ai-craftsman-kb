@@ -21,7 +21,7 @@ export function BackendOffline() {
               <span>Run in your terminal:</span>
             </div>
             <pre className="text-foreground">
-              uv run python -m ai_craftsman_kb.cli serve
+              uv run python -m ai_craftsman_kb.cli server
             </pre>
           </div>
           <p className="text-xs text-muted-foreground">
