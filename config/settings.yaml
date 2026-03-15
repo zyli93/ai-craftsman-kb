@@ -1,10 +1,13 @@
 data_dir: ./data
 
+qdrant:
+  url: http://localhost:6333
+
 embedding:
   provider: llamacpp
   model: v5-small-retrieval-Q8_0.gguf
-  chunk_size: 2000
-  chunk_overlap: 200
+  chunk_size: 512
+  chunk_overlap: 64
 
 llm:
   endpoints:
@@ -98,7 +101,7 @@ llm:
 
   pools:
     gpt-oss-120b:
-      endpoints: [cerebras-gpt-oss-120b, groq-gpt-oss-120b, openrouter-gpt-oss-120b]
+      endpoints: [groq-gpt-oss-120b, openrouter-gpt-oss-120b, cerebras-gpt-oss-120b]
       max_retries: 3
 
     gpt-oss-20b:
@@ -153,6 +156,7 @@ providers:
 youtube:
   api_key: ${YOUTUBE_API_KEY}
   transcript_langs: ["en"]
+  cookies_file: ~/.ai-craftsman-kb/youtube_cookies.txt
 
 reddit:
   client_id: ${REDDIT_CLIENT_ID}

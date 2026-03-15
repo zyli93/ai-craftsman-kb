@@ -819,17 +819,17 @@ async def test_get_transcript_returns_none_when_unavailable() -> None:
 
 
 def test_fetch_transcript_sync_returns_none_on_exception() -> None:
-    """_fetch_transcript_sync() returns None on any exception from youtube-transcript-api.
+    """_fetch_transcript_sync() returns None on any exception from yt-dlp.
 
-    The function uses a broad except clause to handle NoTranscriptFound,
-    TranscriptsDisabled, VideoUnavailable, and network errors gracefully.
+    The function uses a broad except clause to handle download errors,
+    unavailable videos, and network errors gracefully.
     """
-    # Patch the YouTubeTranscriptApi instance method directly.
-    # Since the function does a local import, patching via the module works.
-    with patch(
-        "youtube_transcript_api.YouTubeTranscriptApi.fetch",
-        side_effect=Exception("Transcripts disabled"),
-    ):
+    mock_ydl = MagicMock()
+    mock_ydl.__enter__ = MagicMock(return_value=mock_ydl)
+    mock_ydl.__exit__ = MagicMock(return_value=False)
+    mock_ydl.extract_info.side_effect = Exception("Download error")
+
+    with patch.dict("sys.modules", {"yt_dlp": MagicMock(YoutubeDL=MagicMock(return_value=mock_ydl))}):
         result = _fetch_transcript_sync("disabled_video", ["en"])
 
     assert result is None

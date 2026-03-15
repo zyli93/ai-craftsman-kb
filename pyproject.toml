@@ -35,7 +35,7 @@ dependencies = [
     # Feed parsing
     "feedparser>=6.0",
     # YouTube
-    "youtube-transcript-api>=0.6",
+    "yt-dlp>=2024.0",
     # API server
     "fastapi[standard]>=0.115",
     "uvicorn[standard]>=0.30",

@@ -1,6 +1,7 @@
 """RSS/Atom feed ingestor using feedparser."""
 import asyncio
 import logging
+import re
 from calendar import timegm
 from datetime import datetime, timedelta, timezone
 
@@ -172,6 +173,9 @@ class RSSIngestor(BaseIngestor):
                 )
 
         # Extract content with priority: content:encoded -> summary -> None
+        # Discard trivially short content (< 50 words) so that fetch_content()
+        # will scrape the linked page instead.  Many feeds (e.g. Lobste.rs)
+        # only include a one-line "Comments" link as the summary.
         raw_content: str | None = None
         content_list = getattr(entry, "content", None)
         if content_list:
@@ -182,6 +186,12 @@ class RSSIngestor(BaseIngestor):
         if raw_content is None:
             summary = getattr(entry, "summary", None)
             raw_content = summary or None
+
+        # Strip HTML tags for word counting; discard if too short to be useful
+        if raw_content:
+            plain = re.sub(r"<[^>]+>", " ", raw_content).strip()
+            if len(plain.split()) < 50:
+                raw_content = None
 
         return RawDocument(
             url=entry_url,

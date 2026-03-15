@@ -399,6 +399,7 @@ def make_ingest_progress() -> Progress:
         BarColumn(),
         TextColumn("{task.completed}/{task.total}"),
         TimeElapsedColumn(),
+        console=console,
     )
 
 

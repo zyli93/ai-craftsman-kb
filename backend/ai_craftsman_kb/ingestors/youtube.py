@@ -1,7 +1,10 @@
-"""YouTube ingestor using the YouTube Data API v3 and youtube-transcript-api."""
+"""YouTube ingestor using the YouTube Data API v3 and yt-dlp for subtitles."""
 import asyncio
+import json
 import logging
+import re
 from datetime import datetime, timezone
+from pathlib import Path
 
 import httpx
 
@@ -31,31 +34,141 @@ def _parse_iso_timestamp(ts: str | None) -> datetime | None:
         return None
 
 
-def _fetch_transcript_sync(video_id: str, langs: list[str]) -> str | None:
-    """Synchronously fetch a YouTube transcript and join segments into plain text.
+def _strip_vtt_timestamps(vtt_text: str) -> str:
+    """Strip VTT/SRT timestamps, cue headers, and style tags from subtitle text.
 
-    This is a blocking function designed to be run in a thread executor because
-    youtube-transcript-api is synchronous.
+    Args:
+        vtt_text: Raw VTT or SRT subtitle content.
+
+    Returns:
+        Plain text with timestamps and formatting removed, space-joined.
+    """
+    # Remove WEBVTT header, NOTE blocks, style blocks
+    lines = vtt_text.splitlines()
+    cleaned: list[str] = []
+    for line in lines:
+        line = line.strip()
+        # Skip header, timestamp lines, cue identifiers, and empty lines
+        if not line or line.startswith("WEBVTT") or line.startswith("NOTE"):
+            continue
+        if "-->" in line:
+            continue
+        # Skip numeric cue identifiers (SRT format)
+        if line.isdigit():
+            continue
+        # Remove HTML-style tags like <c>, </c>, <00:01:02.345>
+        line = re.sub(r"<[^>]+>", "", line)
+        if line:
+            cleaned.append(line)
+    return " ".join(cleaned)
+
+
+def _extract_text_from_json3(json3_data: dict) -> str:
+    """Extract plain text from YouTube's JSON3 subtitle format.
+
+    Args:
+        json3_data: Parsed JSON3 subtitle dict with 'events' key.
+
+    Returns:
+        Space-joined plain text from all subtitle segments.
+    """
+    segments: list[str] = []
+    for event in json3_data.get("events", []):
+        segs = event.get("segs", [])
+        for seg in segs:
+            text = seg.get("utf8", "").strip()
+            if text and text != "\n":
+                segments.append(text)
+    return " ".join(segments)
+
+
+def _fetch_transcript_sync(
+    video_id: str, langs: list[str], cookies_file: str | None = None
+) -> str | None:
+    """Synchronously fetch a YouTube transcript via yt-dlp subtitle extraction.
+
+    Uses yt-dlp with --skip-download to extract subtitles without downloading
+    video. Prefers human-uploaded subtitles; falls back to auto-generated.
+
+    This is a blocking function designed to be run in a thread executor.
 
     Args:
         video_id: The YouTube video ID (e.g. 'dQw4w9WgXcQ').
         langs: Ordered list of preferred language codes (e.g. ['en']).
+        cookies_file: Path to a Netscape-format cookies.txt file, or None.
 
     Returns:
         The transcript as a single space-joined string, or None if unavailable.
     """
-    try:
-        from youtube_transcript_api import (  # type: ignore[import-untyped]
-            NoTranscriptFound,
-            TranscriptsDisabled,
-            YouTubeTranscriptApi,
-        )
+    import yt_dlp  # type: ignore[import-untyped]
 
-        fetched = YouTubeTranscriptApi().fetch(video_id, languages=langs)
-        return " ".join(snippet.text for snippet in fetched)
+    url = f"https://www.youtube.com/watch?v={video_id}"
+
+    ydl_opts: dict = {
+        "skip_download": True,
+        "writesubtitles": True,
+        "writeautomaticsubs": True,
+        "subtitleslangs": langs,
+        "subtitlesformat": "json3",
+        "quiet": True,
+        "no_warnings": True,
+        "logger": logger,
+    }
+
+    if cookies_file:
+        cookie_path = Path(cookies_file).expanduser()
+        if cookie_path.exists():
+            ydl_opts["cookiefile"] = str(cookie_path)
+            logger.info("YouTube cookies loaded from %s", cookie_path)
+        else:
+            logger.warning("YouTube cookies file not found: %s", cookie_path)
+
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+            if not info:
+                return None
+
+            requested_subs = info.get("requested_subtitles") or {}
+
+            # Try each requested language in order of preference
+            for lang in langs:
+                sub_info = requested_subs.get(lang)
+                if not sub_info:
+                    continue
+
+                sub_data = sub_info.get("data")
+                sub_url = sub_info.get("url")
+                sub_ext = sub_info.get("ext", "")
+
+                # yt-dlp may embed subtitle data directly or provide a URL
+                if sub_data:
+                    raw = sub_data
+                elif sub_url:
+                    import urllib.request
+
+                    with urllib.request.urlopen(sub_url, timeout=30) as resp:
+                        raw = resp.read().decode("utf-8")
+                else:
+                    continue
+
+                # Parse based on format
+                if sub_ext == "json3" or raw.strip().startswith("{"):
+                    try:
+                        json3 = json.loads(raw)
+                        text = _extract_text_from_json3(json3)
+                    except json.JSONDecodeError:
+                        text = _strip_vtt_timestamps(raw)
+                else:
+                    text = _strip_vtt_timestamps(raw)
+
+                if text.strip():
+                    return text.strip()
+
+            logger.debug("No subtitles found for video %s in langs %s", video_id, langs)
+            return None
+
     except Exception as exc:
-        # Covers NoTranscriptFound, TranscriptsDisabled, VideoUnavailable, and any
-        # other error from the underlying HTTP request.
         logger.debug("Transcript unavailable for video %s: %s", video_id, exc)
         return None
 
@@ -64,7 +177,7 @@ class YouTubeIngestor(BaseIngestor):
     """Ingestor for YouTube channel videos using the YouTube Data API v3.
 
     Pro mode: fetches recent videos for all configured channels and pulls
-    transcripts via youtube-transcript-api.
+    transcripts via yt-dlp.
 
     Radar mode: searches YouTube by keyword and pulls transcripts for
     matching videos.
@@ -72,7 +185,7 @@ class YouTubeIngestor(BaseIngestor):
     Requires YOUTUBE_API_KEY in settings.youtube.api_key. Returns an empty
     list with a warning log if the key is missing, rather than crashing.
 
-    Transcript fetching runs in a thread executor because youtube-transcript-api
+    Transcript fetching runs in a thread executor because yt-dlp
     is synchronous. Transcripts unavailable due to language, privacy, or
     other constraints are logged at DEBUG level and produce raw_content=None.
     """
@@ -93,6 +206,7 @@ class YouTubeIngestor(BaseIngestor):
         )
         # In-memory cache: YouTube handle (e.g. "@AndrejKarpathy") → channel_id
         self._handle_cache: dict[str, str] = {}
+        self._cookies_file = config.settings.youtube.cookies_file
 
     @property
     def _api_key(self) -> str | None:
@@ -347,7 +461,7 @@ class YouTubeIngestor(BaseIngestor):
     async def _get_transcript(self, video_id: str) -> str | None:
         """Fetch a YouTube transcript asynchronously using a thread executor.
 
-        Runs the synchronous youtube-transcript-api call in the default thread
+        Runs the synchronous yt-dlp call in the default thread
         pool executor so it does not block the event loop.
 
         Args:
@@ -358,7 +472,7 @@ class YouTubeIngestor(BaseIngestor):
         """
         loop = asyncio.get_event_loop()
         return await loop.run_in_executor(
-            None, _fetch_transcript_sync, video_id, self._transcript_langs
+            None, _fetch_transcript_sync, video_id, self._transcript_langs, self._cookies_file
         )
 
     async def _resolve_handle(self, handle: str) -> str | None:

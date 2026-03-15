@@ -180,6 +180,7 @@ class YoutubeAPIConfig(BaseModel):
 
     api_key: str | None = None
     transcript_langs: list[str] = ["en"]
+    cookies_file: str | None = None
 
 
 class RedditAPIConfig(BaseModel):
@@ -211,10 +212,17 @@ class SearchConfig(BaseModel):
     hybrid_weight_keyword_tags: float = 0.0
 
 
+class QdrantConfig(BaseModel):
+    """Qdrant vector store connection settings."""
+
+    url: str = "http://localhost:6333"
+
+
 class SettingsConfig(BaseModel):
     """Top-level application settings — LLM routing, embedding, server, credentials."""
 
     data_dir: str = "./data"
+    qdrant: QdrantConfig = QdrantConfig()
     embedding: EmbeddingConfig = EmbeddingConfig()
     llm: LLMGatewayConfig | LLMRoutingConfig | None = None
     providers: dict[str, ProviderConfig] = {}

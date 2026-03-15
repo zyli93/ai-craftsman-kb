@@ -178,6 +178,21 @@ class Chunker:
             )
             chunk_index += 1
 
+        if result:
+            total_tokens = sum(c.token_count for c in result)
+            logger.debug(
+                "Chunked text into %d chunks (%d total tokens, avg %d tokens/chunk)",
+                len(result),
+                total_tokens,
+                total_tokens // len(result),
+            )
+        else:
+            logger.debug(
+                "Chunking produced 0 chunks from %d raw segments (all below %d token minimum)",
+                len(raw_chunks),
+                _MIN_CHUNK_TOKENS,
+            )
+
         return result
 
     def chunk_document(self, doc: DocumentRow) -> list[TextChunk]:

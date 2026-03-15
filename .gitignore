@@ -51,6 +51,9 @@ qdrant_storage/
 # Models (large binary files)
 models/
 
+# YouTube cookies (sensitive, should be in ~/.ai-craftsman-kb/)
+youtube_cookies.txt
+
 # Secrets
 *.pem
 *.key

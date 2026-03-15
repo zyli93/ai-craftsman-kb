@@ -55,10 +55,19 @@ def _get_data_dir(config: AppConfig) -> Path:
 def cli(ctx: click.Context, config_dir: str | None, verbose: bool) -> None:
     """AI Craftsman KB — local content aggregation and search."""
     ctx.ensure_object(dict)
-    if verbose:
-        logging.basicConfig(level=logging.DEBUG)
-    else:
-        logging.basicConfig(level=logging.WARNING)
+    from rich.logging import RichHandler
+
+    level = logging.DEBUG if verbose else logging.WARNING
+    logging.basicConfig(
+        level=level,
+        format="%(message)s",
+        datefmt="[%X]",
+        handlers=[RichHandler(console=console, show_path=False, rich_tracebacks=True)],
+    )
+    if not verbose:
+        # Show INFO for our own modules so ingestion/embedding progress is visible;
+        # keep third-party libraries at WARNING to avoid noise.
+        logging.getLogger("ai_craftsman_kb").setLevel(logging.INFO)
     ctx.obj["config"] = load_config(Path(config_dir) if config_dir else None)
     ctx.obj["verbose"] = verbose
 
@@ -72,8 +81,14 @@ def cli(ctx: click.Context, config_dir: str | None, verbose: bool) -> None:
     default=None,
     help="Ingest only this source type (e.g. hn, substack, reddit)",
 )
+@click.option(
+    "--embed-only",
+    is_flag=True,
+    default=False,
+    help="Only embed documents — skip entity and keyword extraction (no LLM calls).",
+)
 @click.pass_context
-def ingest_pro(ctx: click.Context, source: str | None) -> None:
+def ingest_pro(ctx: click.Context, source: str | None, embed_only: bool) -> None:
     """Pull latest content from all enabled pro-tier sources."""
     config: AppConfig = ctx.obj["config"]
 
@@ -90,7 +105,10 @@ def ingest_pro(ctx: click.Context, source: str | None) -> None:
 
         await _preflight_check(config)
 
-        llm_router = LLMRouter(config)
+        from .llm.usage_tracker import UsageTracker
+
+        usage_tracker = UsageTracker(data_dir)
+        llm_router = LLMRouter(config, usage_tracker=usage_tracker)
 
         # Construct ProcessingPipeline for post-ingest embedding
         from .processing.chunker import Chunker
@@ -108,16 +126,18 @@ def ingest_pro(ctx: click.Context, source: str | None) -> None:
                 chunk_overlap=config.settings.embedding.chunk_overlap,
             )
             vector_store = VectorStore(config)
-            entity_extractor = EntityExtractor(config, llm_router)
 
-            # Only create keyword extractor if keyword_extraction is configured
+            entity_extractor = None
             keyword_extractor = None
-            if config.settings.llm is not None:
-                if isinstance(config.settings.llm, LLMGatewayConfig):
-                    if "keyword_extraction" in config.settings.llm.tasks:
+            if not embed_only:
+                entity_extractor = EntityExtractor(config, llm_router)
+                # Only create keyword extractor if keyword_extraction is configured
+                if config.settings.llm is not None:
+                    if isinstance(config.settings.llm, LLMGatewayConfig):
+                        if "keyword_extraction" in config.settings.llm.tasks:
+                            keyword_extractor = KeywordExtractor(config, llm_router)
+                    elif config.settings.llm.keyword_extraction is not None:
                         keyword_extractor = KeywordExtractor(config, llm_router)
-                elif config.settings.llm.keyword_extraction is not None:
-                    keyword_extractor = KeywordExtractor(config, llm_router)
 
             pipeline = ProcessingPipeline(
                 config=config,
@@ -558,6 +578,60 @@ def delete(ctx: click.Context, document_id: str) -> None:
             console.print_exception()
 
 
+# ── Reset ─────────────────────────────────────────────────────────────────────
+
+
+@cli.command("reset")
+@click.option("--yes", "-y", is_flag=True, default=False, help="Skip confirmation prompt.")
+@click.pass_context
+def reset(ctx: click.Context, yes: bool) -> None:
+    """Delete all data (SQLite + Qdrant) so ingestion starts fresh."""
+    config: AppConfig = ctx.obj["config"]
+    data_dir = _get_data_dir(config)
+    db_path = data_dir / "craftsman.db"
+    qdrant_url = config.settings.qdrant.url
+
+    if not yes:
+        # Show what will be deleted
+        if db_path.exists():
+            size_mb = db_path.stat().st_size / 1024 / 1024
+            console.print(f"  SQLite DB:  {db_path} ({size_mb:.1f} MB)")
+        console.print(f"  Qdrant:     {qdrant_url} (collection ai_craftsman_kb)")
+        if not click.confirm("Delete all data and start fresh?"):
+            console.print("[dim]Aborted.[/dim]")
+            return
+
+    # Remove SQLite database
+    if db_path.exists():
+        db_path.unlink()
+        console.print(f"[red]Deleted[/red] {db_path}")
+
+    # Delete Qdrant collection
+    try:
+        from .search.vector_store import COLLECTION_NAME, VectorStore
+
+        from qdrant_client import QdrantClient
+
+        client = QdrantClient(url=qdrant_url)
+        existing = [c.name for c in client.get_collections().collections]
+        if COLLECTION_NAME in existing:
+            client.delete_collection(COLLECTION_NAME)
+            console.print(f"[red]Deleted[/red] Qdrant collection '{COLLECTION_NAME}'")
+        else:
+            console.print(f"[dim]Qdrant collection '{COLLECTION_NAME}' does not exist[/dim]")
+    except Exception as exc:
+        console.print(f"[yellow]Warning:[/yellow] Could not clear Qdrant: {exc}")
+
+    # Re-initialise empty schema
+    async def _reinit() -> None:
+        from .db.sqlite import init_db
+
+        await init_db(data_dir)
+
+    asyncio.run(_reinit())
+    print_success("Data cleared. Run [bold]cr ingest[/bold] to repopulate.")
+
+
 # ── Briefing ──────────────────────────────────────────────────────────────────
 
 @cli.command("briefing")
@@ -817,31 +891,27 @@ async def _check_database(config: AppConfig) -> tuple[str, str]:
 
 
 async def _check_qdrant(config: AppConfig) -> tuple[str, str]:
-    """Initialise VectorStore and query the collection info.
-
-    If the local Qdrant storage is locked (another process holds it, e.g. the
-    running ``cr server``), treat it as OK — the storage is in use and healthy.
+    """Check the Qdrant server is reachable and query collection info.
 
     Args:
-        config: Loaded application configuration (provides Qdrant path).
+        config: Loaded application configuration (provides Qdrant URL).
 
     Returns:
         ('ok', vector count) or ('error', description with fix hint).
     """
+    qdrant_url = config.settings.qdrant.url
     try:
         from .search.vector_store import VectorStore
 
         vs = VectorStore(config)
         info = vs.get_collection_info()
         count = info.get("vectors_count", 0)
-        return ("ok", f"{count} vectors")
+        return ("ok", f"{count} vectors ({qdrant_url})")
     except Exception as exc:
-        err_str = str(exc)
-        if "already accessed" in err_str:
-            return ("ok", "storage locked by running server (healthy)")
         return (
             "error",
-            f"Qdrant unavailable: {exc}. Run `cr ingest` to initialise.",
+            f"Qdrant server unreachable at {qdrant_url}: {exc}. "
+            "Start Qdrant with: docker run -p 6333:6333 qdrant/qdrant",
         )
 
 
@@ -1204,7 +1274,7 @@ async def _run_doctor(config: AppConfig) -> None:
             model_path = Path(model)  # fall back to bare name
         hints.append(
             f"  [yellow]→[/yellow] Start llamacpp embedding server:\n"
-            f"    llama-server -m {model_path} --port 9990 --embedding"
+            f"    llama-server -m {model_path} --port 9990 --embedding -c 8192 -np 1 -b 2048 -ub 2048"
         )
 
     if all_results.get("Qdrant vectors") not in ("ok",):

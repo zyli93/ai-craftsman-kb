@@ -119,6 +119,16 @@ cr delete <document-id>          # interactive confirmation
 cr delete <document-id> --yes    # skip confirmation (for scripts)
 ```
 
+### `cr reset`
+
+Delete all data (SQLite DB + Qdrant vectors) so ingestion starts fresh.
+Shows what will be deleted and asks for confirmation.
+
+```bash
+cr reset                        # interactive confirmation
+cr reset -y                     # skip confirmation (for scripts)
+```
+
 ### `cr entities`
 
 List top entities by mention count.
@@ -368,9 +378,10 @@ llm:
 
 ### Running fully local (zero API cost)
 
-1. Run Ollama: `ollama serve && ollama pull gpt-oss-20b`
-2. Run llama.cpp for embeddings: `llama-server -m v5-small-retrieval-Q8_0.gguf --port 9990 --embedding`
-3. Configure all pools to use ollama endpoints
+1. Run Qdrant: `docker run -d -p 6333:6333 qdrant/qdrant`
+2. Run Ollama: `ollama serve && ollama pull gpt-oss-20b`
+3. Run llama.cpp for embeddings: `llama-server -m v5-small-retrieval-Q8_0.gguf --port 9990 --embedding -c 8192 -np 1 -b 2048 -ub 2048`
+4. Configure all pools to use ollama endpoints
 
 ---
 
@@ -386,13 +397,13 @@ Configure in `settings.yaml`:
 embedding:
   provider: llamacpp
   model: v5-small-retrieval-Q8_0.gguf
-  chunk_size: 2000
-  chunk_overlap: 200
+  chunk_size: 512
+  chunk_overlap: 64
 ```
 
 For llamacpp, the embedding server must be running:
 ```bash
-llama-server -m /path/to/v5-small-retrieval-Q8_0.gguf --port 9990 --embedding
+llama-server -m /path/to/v5-small-retrieval-Q8_0.gguf --port 9990 --embedding -c 8192 -np 1 -b 2048 -ub 2048
 ```
 
 ---
@@ -465,13 +476,20 @@ them and shows Quick Start hints for anything that's down.
 
 | Service | Command | Port |
 |---------|---------|------|
-| llamacpp (embeddings) | `llama-server -m <model>.gguf --port 9990 --embedding` | 9990 |
+| Qdrant (vectors) | `docker run -d -p 6333:6333 qdrant/qdrant` | 6333 |
+| llamacpp (embeddings) | `llama-server -m <model>.gguf --port 9990 --embedding -c 8192 -np 1 -b 2048 -ub 2048` | 9990 |
 | Ollama (LLM inference) | `ollama serve` | 11434 |
 | Backend + dashboard | `uv run cr server` | 8000 |
 | Frontend dev server | `cd dashboard && pnpm dev` | 3000/5173 |
 
-Qdrant runs as an embedded local store (no separate process). The storage
-directory is `./data/qdrant/` — created automatically on first ingest.
+Qdrant runs as a server on port 6333. Start it with Docker:
+
+```bash
+docker run -d -p 6333:6333 -v $(pwd)/data/qdrant_storage:/qdrant/storage qdrant/qdrant
+```
+
+The collection `ai_craftsman_kb` is created automatically on first ingest.
+Dashboard: http://localhost:6333/dashboard
 
 ### LLM Usage Tracking
 
@@ -580,15 +598,14 @@ cr doctor    # grouped by API Keys, Services, Config — available items first
 
 ### Cleaning up indexed data
 
-There is no dedicated reset command. Delete the data directory to wipe everything:
+Use `cr reset` to delete all data and start fresh:
 
 ```bash
-rm -rf ./data          # if using default local data_dir
-# or
-rm -rf ~/.ai-craftsman-kb/data   # if using the home directory location
+cr reset          # interactive confirmation
+cr reset -y       # skip confirmation
 ```
 
-This removes `craftsman.db` (SQLite) and `qdrant/` (vector embeddings).
+This removes `craftsman.db` (SQLite) and deletes the Qdrant collection.
 The next `cr ingest` recreates everything from scratch.
 
 ### Backup
@@ -596,7 +613,7 @@ The next `cr ingest` recreates everything from scratch.
 | Data | Backup how |
 |------|-----------|
 | `./data/craftsman.db` | `sqlite3 craftsman.db ".backup backup.db"` |
-| `./data/qdrant/` | Copy the directory |
+| Qdrant collection | Qdrant snapshots API or Docker volume backup |
 | Config (`settings.yaml` + `sources.yaml`) | Version control or copy |
 
 Qdrant vectors can be rebuilt by re-running embeddings on existing documents
@@ -622,10 +639,10 @@ Database migrations run automatically on next startup — no manual steps needed
 - If 0 vectors: the embedding pipeline may have failed. Run
   `cr ingest --source hn -v` to see verbose output.
 
-**Qdrant "already accessed" error:**
-- The local Qdrant storage can only be opened by one process at a time.
-- If `cr server` is running, it holds the lock — this is normal.
-- `cr doctor` recognises this and reports it as healthy.
+**Qdrant connection refused:**
+- Qdrant server must be running on port 6333.
+- Start with: `docker run -d -p 6333:6333 qdrant/qdrant`
+- Dashboard: http://localhost:6333/dashboard
 
 **All endpoints exhausted (LLM gateway):**
 - Every endpoint in the pool has hit its daily limit.
@@ -642,7 +659,7 @@ Database migrations run automatically on next startup — no manual steps needed
 
 **llamacpp embedding server not responding:**
 - Check: `curl http://localhost:9990/health`
-- Start: `llama-server -m v5-small-retrieval-Q8_0.gguf --port 9990 --embedding`
+- Start: `llama-server -m v5-small-retrieval-Q8_0.gguf --port 9990 --embedding -c 8192 -np 1 -b 2048 -ub 2048`
 - `cr doctor` shows this under Services and includes a Quick Start hint.
 
 **direnv not loading env vars:**

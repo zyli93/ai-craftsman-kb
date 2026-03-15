@@ -137,6 +137,7 @@ class IngestRunner:
         """
         report = IngestReport(source_type=ingestor.source_type)
         data_dir = self.db_path.parent
+        logger.info("[%s] Starting ingestion (origin=%s)", ingestor.source_type, origin)
 
         # Step 1: Get last_fetched_at for incremental fetch.
         # Open DB briefly to read the existing source row, then close it
@@ -180,6 +181,7 @@ class IngestRunner:
         try:
             raw_docs = await ingestor.fetch_pro()
             report.fetched = len(raw_docs)
+            logger.info("[%s] Fetched %d raw documents", ingestor.source_type, len(raw_docs))
         except Exception as e:
             msg = f"fetch_pro failed: {e}"
             logger.error("[%s] %s", ingestor.source_type, msg)
@@ -239,6 +241,12 @@ class IngestRunner:
                 passed_docs.append((doc_with_origin, result))
 
         report.passed_filter = len(passed_docs)
+        logger.info(
+            "[%s] Filter: %d passed, %d rejected",
+            ingestor.source_type,
+            len(passed_docs),
+            len(filter_results) - len(passed_docs),
+        )
 
         async with get_db(data_dir) as conn:
             # Step 5: Ensure source row exists, reusing existing ID if present
@@ -287,11 +295,25 @@ class IngestRunner:
                     logger.error("[%s] %s", ingestor.source_type, msg)
                     report.errors.append(msg)
 
+            logger.info(
+                "[%s] Stored %d new docs (%d duplicates skipped)",
+                ingestor.source_type,
+                report.stored,
+                report.skipped_duplicate,
+            )
+
             # Step 9: Run post-ingest processing pipeline if configured
             if self.pipeline is not None and stored_doc_rows:
                 try:
+                    # Use concurrency=1 for local embedding servers to avoid
+                    # overwhelming a single-slot llama.cpp process.
+                    embed_provider = getattr(
+                        getattr(self.pipeline.embedder, "embedding_cfg", None),
+                        "provider", "",
+                    )
+                    batch_concurrency = 1 if embed_provider == "llamacpp" else 3
                     processing_report = await self.pipeline.process_batch(
-                        conn, stored_doc_rows
+                        conn, stored_doc_rows, concurrency=batch_concurrency
                     )
                     report.embedded = processing_report.embedded
                     report.entities_extracted = processing_report.entity_extracted
@@ -303,10 +325,25 @@ class IngestRunner:
                     logger.error("[%s] %s", ingestor.source_type, msg)
                     report.errors.append(msg)
 
+            if self.pipeline is None and stored_doc_rows:
+                logger.warning(
+                    "[%s] No processing pipeline configured — %d docs stored but NOT embedded",
+                    ingestor.source_type,
+                    len(stored_doc_rows),
+                )
+
             # Step 10: Update source last_fetched_at timestamp, clear any previous error
             await update_source_fetch_status(conn, source_id, last_fetched_at=now_iso)
             await conn.commit()
 
+        logger.info(
+            "[%s] Ingestion complete: fetched=%d stored=%d embedded=%d errors=%d",
+            ingestor.source_type,
+            report.fetched,
+            report.stored,
+            report.embedded,
+            len(report.errors),
+        )
         return report
 
     async def _get_or_create_source_id(

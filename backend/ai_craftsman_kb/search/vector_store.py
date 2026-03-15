@@ -1,8 +1,9 @@
-"""Qdrant local vector store for AI Craftsman KB.
+"""Qdrant vector store for AI Craftsman KB.
 
 Provides a ``VectorStore`` wrapper around the Qdrant client for inserting,
-searching, and deleting embedding vectors. Uses local file-based storage
-(no Docker required). Collection is created automatically on first use.
+searching, and deleting embedding vectors. Connects to a Qdrant server
+(default ``http://localhost:6333``). Collection is created automatically on
+first use.
 
 The Qdrant client SDK is synchronous; heavy operations (upsert, search) are
 wrapped in ``asyncio.get_event_loop().run_in_executor`` so they can be called
@@ -13,7 +14,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 from qdrant_client import QdrantClient
@@ -57,23 +57,23 @@ def _dimensions_for_provider(config: "AppConfig") -> int:
     provider = embedding_cfg.provider
     model = embedding_cfg.model
 
-    if provider == "openai":
-        # OpenAI embedding model dimensions
-        openai_dims = {
-            "text-embedding-3-small": 1536,
-            "text-embedding-3-large": 3072,
-            "text-embedding-ada-002": 1536,
-        }
-        return openai_dims.get(model, _DEFAULT_VECTOR_SIZE)
-    elif "nomic" in model:
-        return 768
-    else:
-        # MiniLM and other sentence-transformers defaults
-        local_dims = {
-            "all-MiniLM-L6-v2": 384,
-            "all-mpnet-base-v2": 768,
-        }
-        return local_dims.get(model, 384)
+    # Unified lookup covering all providers
+    known_dims: dict[str, int] = {
+        # OpenAI
+        "text-embedding-3-small": 1536,
+        "text-embedding-3-large": 3072,
+        "text-embedding-ada-002": 1536,
+        # Nomic
+        "nomic-embed-text": 768,
+        # Jina v5 (llama.cpp GGUF)
+        "v5-small-retrieval-Q8_0.gguf": 1024,
+        "v5-small-retrieval-Q4_K_M.gguf": 1024,
+        "v5-small-retrieval-F16.gguf": 1024,
+        # sentence-transformers (local)
+        "all-MiniLM-L6-v2": 384,
+        "all-mpnet-base-v2": 768,
+    }
+    return known_dims.get(model, _DEFAULT_VECTOR_SIZE)
 
 
 def _build_filter(
@@ -139,7 +139,7 @@ class VectorStore:
 
     Args:
         config: Fully loaded :class:`~ai_craftsman_kb.config.models.AppConfig`.
-            ``config.settings.data_dir`` determines where Qdrant persists data.
+            ``config.settings.qdrant.url`` determines the Qdrant server address.
             Pass ``None`` to use an in-memory client (testing only).
 
     Attributes:
@@ -170,9 +170,8 @@ class VectorStore:
             self._client = _client
             self._vector_size = _vector_size if _vector_size is not None else _DEFAULT_VECTOR_SIZE
         elif config is not None:
-            qdrant_path = Path(config.settings.data_dir).expanduser() / "qdrant"
-            qdrant_path.mkdir(parents=True, exist_ok=True)
-            self._client = QdrantClient(path=str(qdrant_path))
+            qdrant_url = config.settings.qdrant.url
+            self._client = QdrantClient(url=qdrant_url)
             # Prefer the method on EmbeddingConfig if available, fall back to module helper
             embedding_cfg = config.settings.embedding
             if hasattr(embedding_cfg, "dimensions_for_provider"):
@@ -293,13 +292,28 @@ class VectorStore:
 
         # Qdrant client is synchronous — run in executor to avoid blocking
         loop = asyncio.get_event_loop()
-        await loop.run_in_executor(
-            None,
-            lambda: self._client.upsert(
-                collection_name=COLLECTION_NAME,
-                points=points,
-            ),
-        )
+        try:
+            await loop.run_in_executor(
+                None,
+                lambda: self._client.upsert(
+                    collection_name=COLLECTION_NAME,
+                    points=points,
+                ),
+            )
+            logger.info(
+                "Qdrant: upserted %d vectors for document %s (collection='%s')",
+                len(points),
+                document_id,
+                COLLECTION_NAME,
+            )
+        except Exception as exc:
+            logger.error(
+                "Qdrant upsert FAILED for document %s (%d vectors): %s",
+                document_id,
+                len(points),
+                exc,
+            )
+            raise
 
         return point_ids
 

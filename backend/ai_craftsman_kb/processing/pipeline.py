@@ -107,7 +107,7 @@ class ProcessingPipeline:
         embedder: "Embedder",
         chunker: "Chunker",
         vector_store: "VectorStore",
-        entity_extractor: "EntityExtractor",
+        entity_extractor: "EntityExtractor | None" = None,
         keyword_extractor: "KeywordExtractor | None" = None,
     ) -> None:
         self.config = config
@@ -143,8 +143,9 @@ class ProcessingPipeline:
             conn: Open aiosqlite connection with row_factory configured.
             document: The DocumentRow to process.
         """
+        entities_done = document.is_entities_extracted or self.entity_extractor is None
         keywords_done = document.is_keywords_extracted or self.keyword_extractor is None
-        if document.is_embedded and document.is_entities_extracted and keywords_done:
+        if document.is_embedded and entities_done and keywords_done:
             logger.debug(
                 "Document %s already fully processed — skipping",
                 document.id,
@@ -156,7 +157,7 @@ class ProcessingPipeline:
             await self._embed_document(conn, document)
 
         # Step 3: Entity extraction
-        if not document.is_entities_extracted:
+        if self.entity_extractor is not None and not document.is_entities_extracted:
             await self._extract_entities(conn, document)
 
         # Step 4: Keyword extraction
@@ -182,9 +183,10 @@ class ProcessingPipeline:
         """
         # Skip if no content to embed
         if not document.raw_content:
-            logger.debug(
-                "Document %s has no raw_content — skipping embedding",
+            logger.info(
+                "Document %s (%s) has no raw_content — skipping embedding",
                 document.id,
+                document.title or "untitled",
             )
             return False
 
@@ -193,9 +195,10 @@ class ProcessingPipeline:
         if word_count is None:
             word_count = len(document.raw_content.split())
         if word_count < _MIN_WORD_COUNT:
-            logger.debug(
-                "Document %s word_count=%d < %d — skipping embedding",
+            logger.info(
+                "Document %s (%s) word_count=%d < %d — skipping embedding",
                 document.id,
+                document.title or "untitled",
                 word_count,
                 _MIN_WORD_COUNT,
             )
@@ -205,11 +208,22 @@ class ProcessingPipeline:
             # Chunk the raw content
             chunks = self.chunker.chunk(document.raw_content)
             if not chunks:
-                logger.debug(
-                    "Document %s produced no chunks — skipping embedding",
+                logger.info(
+                    "Document %s (%s) produced 0 chunks — skipping embedding",
                     document.id,
+                    document.title or "untitled",
                 )
                 return False
+
+            provider = getattr(
+                getattr(self.embedder, "embedding_cfg", None), "provider", "unknown"
+            )
+            logger.info(
+                "Document %s: chunked into %d pieces, embedding via %s...",
+                document.id,
+                len(chunks),
+                provider,
+            )
 
             # Embed all chunk texts in one batch call
             chunk_texts = [c.text for c in chunks]
@@ -376,7 +390,14 @@ class ProcessingPipeline:
         report = ProcessingReport(total=len(documents))
 
         if not documents:
+            logger.info("process_batch called with 0 documents — nothing to do")
             return report
+
+        logger.info(
+            "Processing batch of %d documents (concurrency=%d)",
+            len(documents),
+            concurrency,
+        )
 
         semaphore = asyncio.Semaphore(concurrency)
 
@@ -394,11 +415,15 @@ class ProcessingPipeline:
                     "keywords_extracted": False,
                 }
 
+                entities_done = (
+                    doc.is_entities_extracted
+                    or self.entity_extractor is None
+                )
                 keywords_done = (
                     doc.is_keywords_extracted
                     or self.keyword_extractor is None
                 )
-                if doc.is_embedded and doc.is_entities_extracted and keywords_done:
+                if doc.is_embedded and entities_done and keywords_done:
                     # Already fully processed — skip silently
                     return outcome
 
@@ -420,7 +445,7 @@ class ProcessingPipeline:
                         errors.append(msg)
 
                 # Entity extraction step (independent of embedding)
-                if not was_extracted:
+                if self.entity_extractor is not None and not was_extracted:
                     try:
                         extract_success = await self._extract_entities(conn, doc)
                         outcome["entity_extracted"] = extract_success
@@ -488,6 +513,18 @@ class ProcessingPipeline:
             if "errors" in outcome:
                 report.errors.append(str(outcome["errors"]))
 
+        logger.info(
+            "Batch complete: %d/%d embedded, %d/%d entities, %d/%d keywords, "
+            "%d embed failures, %d errors",
+            report.embedded,
+            report.total,
+            report.entity_extracted,
+            report.total,
+            report.keywords_extracted,
+            report.total,
+            report.failed_embedding,
+            len(report.errors),
+        )
         return report
 
     async def reprocess_unembedded(

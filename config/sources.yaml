@@ -23,8 +23,7 @@ subreddits:
 rss:
   - url: https://lobste.rs/rss
     name: "Lobste.rs"
-  - url: https://openai.com/blog/rss.xml
-    name: "OpenAI Blog"
+
 
 hackernews:
   mode: top

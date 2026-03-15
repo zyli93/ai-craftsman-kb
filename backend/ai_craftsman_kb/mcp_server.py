@@ -67,7 +67,11 @@ def create_mcp_server(config: AppConfig) -> FastMCP:
     _db_path = Path(config.settings.data_dir).expanduser().resolve() / "craftsman.db"
     _vector_store = VectorStore(config)
     _embedder = Embedder(config)
-    _llm_router = LLMRouter(config)
+    from .llm.usage_tracker import UsageTracker
+
+    _data_dir = Path(config.settings.data_dir).expanduser().resolve()
+    _usage_tracker = UsageTracker(_data_dir)
+    _llm_router = LLMRouter(config, usage_tracker=_usage_tracker)
 
     mcp = FastMCP("ai-craftsman-kb")
     _mcp = mcp

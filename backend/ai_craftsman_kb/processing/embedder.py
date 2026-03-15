@@ -115,7 +115,15 @@ class Embedder:
             return []
 
         provider = self.embedding_cfg.provider
+        model = self.embedding_cfg.model
         all_vectors: list[list[float]] = []
+
+        logger.info(
+            "Embedding %d texts via provider='%s' model='%s'",
+            len(texts),
+            provider,
+            model,
+        )
 
         # Process in batches to respect API limits
         for i in range(0, len(texts), batch_size):
@@ -128,19 +136,26 @@ class Embedder:
                 provider,
             )
 
-            if provider == "openai":
-                vectors = await self._embed_openai(batch)
-            elif provider == "llamacpp":
-                vectors = await self._embed_llamacpp(batch)
-            elif provider == "local":
-                vectors = await asyncio.get_event_loop().run_in_executor(
-                    None, self._embed_local, batch
+            try:
+                if provider == "openai":
+                    vectors = await self._embed_openai(batch)
+                elif provider == "llamacpp":
+                    vectors = await self._embed_llamacpp(batch)
+                elif provider == "local":
+                    vectors = await asyncio.get_event_loop().run_in_executor(
+                        None, self._embed_local, batch
+                    )
+                else:
+                    raise ValueError(
+                        f"Unknown embedding provider: '{provider}'. "
+                        "Supported providers: openai, llamacpp, local."
+                    )
+            except Exception as exc:
+                logger.error(
+                    "Embedding failed for batch %d-%d via '%s' model='%s': %s",
+                    i, i + len(batch), provider, model, exc,
                 )
-            else:
-                raise ValueError(
-                    f"Unknown embedding provider: '{provider}'. "
-                    "Supported providers: openai, llamacpp, local."
-                )
+                raise
 
             all_vectors.extend(vectors)
 
@@ -203,6 +218,7 @@ class Embedder:
         api_key = openai_cfg.api_key if openai_cfg else None
 
         if not api_key:
+            logger.error("OpenAI API key not configured — cannot embed")
             raise ValueError(
                 "OpenAI API key not configured for embedding provider 'openai'. "
                 "Set OPENAI_API_KEY or add it to config/settings.yaml."
@@ -239,6 +255,10 @@ class Embedder:
         The server must be running with ``--embedding`` mode enabled.
         No API key is required — authentication is not used for local servers.
 
+        Sends one text per request to avoid overwhelming the server — embedding
+        models typically have a single processing slot and a limited context
+        window, so large batch payloads cause crashes.
+
         Args:
             texts: Batch of texts to embed.
 
@@ -251,18 +271,24 @@ class Embedder:
         url = f"{base_url}/v1/embeddings"
         model = self.embedding_cfg.model
 
-        async def _call() -> list[list[float]]:
-            async with httpx.AsyncClient(timeout=60.0) as client:
-                response = await client.post(
-                    url,
-                    json={"model": model, "input": texts},
-                )
-                response.raise_for_status()
-                data = response.json()
-                items = sorted(data["data"], key=lambda x: x["index"])
-                return [item["embedding"] for item in items]
+        all_vectors: list[list[float]] = []
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            for i, text in enumerate(texts):
+                async def _call(t: str = text) -> list[float]:
+                    response = await client.post(
+                        url,
+                        json={"model": model, "input": t},
+                    )
+                    response.raise_for_status()
+                    data = response.json()
+                    return data["data"][0]["embedding"]
 
-        return await with_retry(_call, operation_name=f"llama.cpp embed [{model}]")
+                vector = await with_retry(
+                    _call, operation_name=f"llama.cpp embed [{model}] ({i+1}/{len(texts)})"
+                )
+                all_vectors.append(vector)
+
+        return all_vectors
 
     def _embed_local(self, texts: list[str]) -> list[list[float]]:
         """Embed texts using a local sentence-transformers model.
