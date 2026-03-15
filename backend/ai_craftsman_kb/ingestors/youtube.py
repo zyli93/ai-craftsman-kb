@@ -87,9 +87,10 @@ def _fetch_transcript_sync(
 ) -> str | None:
     """Synchronously fetch a YouTube transcript via yt-dlp subtitle extraction.
 
-    Uses yt-dlp's download() with skip_download=True to write subtitle files
-    to a temp directory. yt-dlp handles all HTTP details (impersonation,
-    retries, cookies) internally. Prefers human subs; falls back to auto.
+    Uses yt-dlp's extract_info() to discover available subtitles, then fetches
+    the subtitle URL using yt-dlp's own HTTP handler (which handles browser
+    impersonation and avoids 429 rate limits). Prefers human-uploaded subtitles;
+    falls back to auto-generated.
 
     This is a blocking function designed to be run in a thread executor.
 
@@ -101,21 +102,12 @@ def _fetch_transcript_sync(
     Returns:
         The transcript as a single space-joined string, or None if unavailable.
     """
-    import shutil
-    import tempfile
-
     import yt_dlp  # type: ignore[import-untyped]
 
     url = f"https://www.youtube.com/watch?v={video_id}"
-    tmpdir = tempfile.mkdtemp(prefix="ytdlp_subs_")
 
     ydl_opts: dict = {
         "skip_download": True,
-        "writesubtitles": True,
-        "writeautomaticsubs": True,
-        "subtitleslangs": langs,
-        "subtitlesformat": "json3/vtt/best",
-        "outtmpl": str(Path(tmpdir) / "%(id)s.%(ext)s"),
         "quiet": True,
         "no_warnings": True,
         "logger": logger,
@@ -132,51 +124,58 @@ def _fetch_transcript_sync(
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            ydl.download([url])
+            info = ydl.extract_info(url, download=False)
+            if not info:
+                return None
 
-        # Find subtitle files written by yt-dlp (e.g. kCc8FmEb1nY.en.json3)
-        import glob
+            # Priority: human-uploaded subtitles first, then auto-generated
+            human_subs = info.get("subtitles") or {}
+            auto_subs = info.get("automatic_captions") or {}
 
-        sub_files = glob.glob(str(Path(tmpdir) / f"{video_id}.*"))
-        if not sub_files:
-            logger.debug("No subtitle files written for video %s", video_id)
-            return None
+            for lang in langs:
+                for sub_dict in (human_subs, auto_subs):
+                    formats = sub_dict.get(lang, [])
+                    if not formats:
+                        continue
 
-        # Try each language in preference order
-        for lang in langs:
-            # Prefer json3, then vtt, then any
-            for ext in ("json3", "vtt", ""):
-                pattern = f"{video_id}.{lang}*"
-                if ext:
-                    pattern = f"{video_id}.{lang}*.{ext}"
-                matches = glob.glob(str(Path(tmpdir) / pattern))
-                if not matches:
-                    continue
+                    # Prefer json3 format, fall back to vtt, then anything
+                    sub_entry = None
+                    for preferred_ext in ("json3", "vtt"):
+                        for fmt in formats:
+                            if fmt.get("ext") == preferred_ext:
+                                sub_entry = fmt
+                                break
+                        if sub_entry:
+                            break
+                    if not sub_entry:
+                        sub_entry = formats[0]
 
-                sub_path = matches[0]
-                with open(sub_path, encoding="utf-8") as f:
-                    raw = f.read()
+                    sub_url = sub_entry.get("url")
+                    if not sub_url:
+                        continue
 
-                if sub_path.endswith(".json3") or raw.strip().startswith("{"):
-                    try:
-                        json3 = json.loads(raw)
-                        text = _extract_text_from_json3(json3)
-                    except json.JSONDecodeError:
+                    # Use yt-dlp's own HTTP handler (handles impersonation, avoids 429)
+                    raw = ydl.urlopen(sub_url).read().decode("utf-8")
+
+                    sub_ext = sub_entry.get("ext", "")
+                    if sub_ext == "json3" or raw.strip().startswith("{"):
+                        try:
+                            json3 = json.loads(raw)
+                            text = _extract_text_from_json3(json3)
+                        except json.JSONDecodeError:
+                            text = _strip_vtt_timestamps(raw)
+                    else:
                         text = _strip_vtt_timestamps(raw)
-                else:
-                    text = _strip_vtt_timestamps(raw)
 
-                if text.strip():
-                    return text.strip()
+                    if text.strip():
+                        return text.strip()
 
-        logger.debug("No subtitles found for video %s in langs %s", video_id, langs)
-        return None
+            logger.debug("No subtitles found for video %s in langs %s", video_id, langs)
+            return None
 
     except Exception as exc:
         logger.debug("Transcript unavailable for video %s: %s", video_id, exc)
         return None
-    finally:
-        shutil.rmtree(tmpdir, ignore_errors=True)
 
 
 class YouTubeIngestor(BaseIngestor):
